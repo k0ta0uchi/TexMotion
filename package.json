@@ -1,0 +1,23 @@
+{
+  "name": "com.k0ta0uchi.texmotion",
+  "version": "1.0.0",
+  "displayName": "TexMotion",
+  "description": "Generate 3D avatar animations from text prompts and automatically setup for VRChat avatars.",
+  "unity": "2022.3",
+  "author": {
+    "name": "k0ta0uchi",
+    "url": "https://github.com/k0ta0uchi"
+  },
+  "dependencies": {},
+  "vpmDependencies": {
+    "nadena.dev.modular-avatar": "^1.8.0"
+  },
+  "keywords": [
+    "vrchat",
+    "motion",
+    "animation",
+    "ai",
+    "diffusion",
+    "modular-avatar"
+  ]
+}

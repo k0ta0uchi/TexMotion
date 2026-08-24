@@ -1,0 +1,47 @@
+# Unity / UPM specific ignores
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+Recordings/
+
+# Visual Studio / Rider / VSCode
+.vs/
+.idea/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.opendb
+*.VC.db
+
+# OS Generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
+
+# Workflow and local temporary files
+.gemini_workflow/
+scratch/
+*.tmp
+*.log
+
+# Large downloaded model files (models should be downloaded via UI)
+*.gguf
+*.bin
+llm2vec-text-bundle/
