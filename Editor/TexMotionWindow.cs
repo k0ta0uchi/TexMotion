@@ -1584,6 +1584,25 @@ namespace TexMotion.Editor
                 }
                 GUI.backgroundColor = Color.white;
 
+                GUI.backgroundColor = new Color(0.95f, 0.7f, 0.2f);
+                if (GUILayout.Button("✏️ Edit", GUILayout.Width(60), GUILayout.Height(28)))
+                {
+                    Animator targetAnim = _targetAvatar != null ? _targetAvatar.GetComponent<Animator>() : null;
+                    if (targetAnim != null && item.Clip != null)
+                    {
+                        var editData = EditableMotionData.FromAnimationClip(item.Clip, targetAnim);
+                        if (editData != null)
+                        {
+                            MotionTimelineEditorWindow.OpenWithEditableData(editData);
+                        }
+                    }
+                    else
+                    {
+                        EditorUtility.DisplayDialog("Target Avatar Required", "Please assign a humanoid Target Avatar above to edit this clip.", "OK");
+                    }
+                }
+                GUI.backgroundColor = Color.white;
+
                 if (item.IsAppliedToAvatar)
                 {
                     GUI.backgroundColor = new Color(0.9f, 0.4f, 0.4f);
@@ -1912,6 +1931,12 @@ namespace TexMotion.Editor
             EditorGUILayout.LabelField("Apply to Avatar:", EditorStyles.boldLabel);
 
             EditorGUILayout.BeginHorizontal();
+
+            GUI.backgroundColor = new Color(0.95f, 0.7f, 0.2f);
+            if (GUILayout.Button("✏️ Edit in Timeline", GUILayout.Height(40)))
+            {
+                OpenInTimelineEditor();
+            }
 
             GUI.backgroundColor = new Color(0.2f, 0.85f, 0.45f);
             if (GUILayout.Button("✨ Apply to Avatar", GUILayout.Height(40)))
@@ -2260,6 +2285,29 @@ namespace TexMotion.Editor
             EditorGUI.DrawRect(new Rect(rect.x + rect.width - 1, rect.y, 1, rect.height), borderColor);
         }
 
+        private void OpenInTimelineEditor()
+        {
+            if (_currentMotionData == null) return;
+
+            Animator targetAnim = _targetAvatar != null ? _targetAvatar.GetComponent<Animator>() : null;
+            bool isVideo = (_currentMotionData is VideoMotionData);
+            string mName = isVideo ? _videoMotionName : _motionName;
+            var hPose = isVideo ? _videoHandPose : _handPose;
+            var fEmo = isVideo ? _videoFaceEmotion : _faceEmotion;
+            var eInt = isVideo ? _videoEmotionIntensity : _emotionIntensity;
+            bool inPl = isVideo ? _videoInPlace : _inPlace;
+
+            MotionTimelineEditorWindow.OpenWithMotion(
+                _currentMotionData,
+                targetAnim,
+                mName,
+                hPose,
+                fEmo,
+                eInt,
+                inPl
+            );
+        }
+
         private void ApplyMotionToAvatar()
         {
             if (_currentMotionData == null || _targetAvatar == null) return;
@@ -2529,6 +2577,19 @@ namespace TexMotion.Editor
             }
             EditorGUILayout.EndVertical();
 
+            EditorGUILayout.Space(15);
+
+            // Motion Timeline Editor Settings
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            EditorGUILayout.LabelField("⏱️ Motion Timeline Editor", EditorStyles.boldLabel);
+            settings.AutoOpenTimelineEditor = EditorGUILayout.Toggle("Auto Open Timeline Editor", settings.AutoOpenTimelineEditor);
+            EditorGUILayout.HelpBox("Automatically opens the dedicated Motion Timeline Editor upon completing text motion generation or video pose extraction.", MessageType.None);
+            if (GUILayout.Button("Launch Motion Timeline Editor", GUILayout.Height(26)))
+            {
+                MotionTimelineEditorWindow.ShowEditor();
+            }
+            EditorGUILayout.EndVertical();
+
             if (GUI.changed)
             {
                 settings.Save();
@@ -2626,6 +2687,11 @@ namespace TexMotion.Editor
 
                 _overallProgress = 1.0f;
                 _statusMessage = $"Motion ready! Previewing on {_targetAvatar.name}.";
+
+                if (TexMotionSettings.instance.AutoOpenTimelineEditor)
+                {
+                    OpenInTimelineEditor();
+                }
             }
             catch (Exception ex)
             {
@@ -2708,6 +2774,11 @@ namespace TexMotion.Editor
                 _isPlayingPreview = true;
 
                 _videoExtractionStatus = $"Extracted {result.Frames} frames successfully!";
+
+                if (TexMotionSettings.instance.AutoOpenTimelineEditor)
+                {
+                    OpenInTimelineEditor();
+                }
             }
             catch (OperationCanceledException)
             {

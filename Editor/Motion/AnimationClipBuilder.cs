@@ -480,7 +480,7 @@ namespace TexMotion.Editor.Motion
             }
         }
 
-        private static Quaternion ConvertSmplRotationToUnity(Quaternion smplRot, SmplxJoint joint, Quaternion restPoseRot)
+        public static Quaternion ConvertSmplRotationToUnity(Quaternion smplRot, SmplxJoint joint, Quaternion restPoseRot)
         {
             if (smplRot.x == 0 && smplRot.y == 0 && smplRot.z == 0 && smplRot.w == 0)
             {
@@ -489,6 +489,12 @@ namespace TexMotion.Editor.Motion
 
             Quaternion converted = new Quaternion(smplRot.x, -smplRot.y, -smplRot.z, smplRot.w);
             return restPoseRot * converted;
+        }
+
+        public static Quaternion ConvertUnityRotationToSmpl(Quaternion unityRot, SmplxJoint joint, Quaternion restPoseRot)
+        {
+            Quaternion converted = Quaternion.Inverse(restPoseRot) * unityRot;
+            return new Quaternion(converted.x, -converted.y, -converted.z, converted.w);
         }
     }
 }

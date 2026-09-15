@@ -24,6 +24,9 @@ namespace TexMotion.Editor
         [Header("Python Video Pose Extraction")]
         public string CustomPythonExecutablePath = "";
 
+        [Header("Workflow & Timeline Editor")]
+        public bool AutoOpenTimelineEditor = true;
+
         public string GetDefaultCacheDirectory()
         {
             string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TexMotion", "Models");
