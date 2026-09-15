@@ -579,10 +579,10 @@ namespace TexMotion.Editor.Motion
                     };
                     GUI.Label(rect, "⚠️ No Avatar Assigned\nPlease select a Humanoid Avatar in the toolbar above.", missingStyle);
                 }
-
-                // Overlay Viewport HUD (Toggles, Camera Reset, Bone badge, hint)
-                DrawViewportHUD(rect);
             }
+
+            // Overlay Viewport HUD (Toggles, Camera Reset, Bone badge, hint)
+            DrawViewportHUD(rect);
         }
 
         #region Bone Skeleton & Gizmo Interaction
@@ -765,6 +765,12 @@ namespace TexMotion.Editor.Motion
             // 2. Mouse Down: Click Selection or Start Gizmo Drag
             if (evt.type == EventType.MouseDown && evt.button == 0 && containsMouse)
             {
+                // Don't intercept clicks inside HUD toolbar areas
+                if (mousePos.y < rect.y + 36f || mousePos.y > rect.yMax - 26f)
+                {
+                    return false;
+                }
+
                 // Test Gizmo Axis first if a joint is already selected
                 if (_selectedJoint.HasValue && _showGizmos)
                 {
@@ -982,66 +988,96 @@ namespace TexMotion.Editor.Motion
 
         private void DrawViewportHUD(Rect rect)
         {
-            // Top-Left Toolbar: Skeleton & Gizmos Toggles
-            Rect toolBarRect = new Rect(rect.x + 8, rect.y + 8, 160, 24);
-            GUILayout.BeginArea(toolBarRect);
-            EditorGUILayout.BeginHorizontal();
+            Color origColor = GUI.backgroundColor;
+
+            // 1. Top-Left Toolbar: Skeleton & Gizmos Toggles
+            Rect skelRect = new Rect(rect.x + 8, rect.y + 8, 86, 22);
+            Rect gizmoRect = new Rect(rect.x + 96, rect.y + 8, 76, 22);
 
             GUI.backgroundColor = _showSkeleton ? new Color(0.3f, 0.85f, 0.45f) : new Color(0.35f, 0.35f, 0.35f);
-            _showSkeleton = GUILayout.Toggle(_showSkeleton, "🦴 Skeleton", EditorStyles.miniButtonLeft, GUILayout.Width(78), GUILayout.Height(22));
-
-            GUI.backgroundColor = _showGizmos ? new Color(0.3f, 0.7f, 1.0f) : new Color(0.35f, 0.35f, 0.35f);
-            _showGizmos = GUILayout.Toggle(_showGizmos, "🎯 Gizmos", EditorStyles.miniButtonRight, GUILayout.Width(68), GUILayout.Height(22));
-
-            GUI.backgroundColor = Color.white;
-            EditorGUILayout.EndHorizontal();
-            GUILayout.EndArea();
-
-            // Top-Right: Camera Reset & Active Bone Badge
-            float rightWidth = _selectedJoint.HasValue ? 280 : 95;
-            Rect rightBarRect = new Rect(rect.xMax - rightWidth - 8, rect.y + 8, rightWidth, 24);
-            GUILayout.BeginArea(rightBarRect);
-            EditorGUILayout.BeginHorizontal();
-
-            if (_selectedJoint.HasValue)
+            bool newShowSkel = GUI.Toggle(skelRect, _showSkeleton, "🦴 Skeleton", EditorStyles.miniButton);
+            if (newShowSkel != _showSkeleton)
             {
-                var badgeStyle = new GUIStyle(EditorStyles.miniBoldLabel)
-                {
-                    normal = { textColor = new Color(1.0f, 0.85f, 0.25f) }
-                };
-                string friendlyName = GetJointFriendlyName(_selectedJoint.Value);
-                EditorGUILayout.LabelField($"🎯 {friendlyName}", badgeStyle, GUILayout.Width(130));
-
-                if (GUILayout.Button("Clear", EditorStyles.miniButton, GUILayout.Width(42), GUILayout.Height(20)))
-                {
-                    _selectedJoint = null;
-                }
-
-                if (GUILayout.Button("Reset", EditorStyles.miniButton, GUILayout.Width(45), GUILayout.Height(20)))
-                {
-                    _data.ResetJointToOriginal(_currentFrame, _selectedJoint.Value);
-                    ApplyCurrentFrameToPreview();
-                }
+                _showSkeleton = newShowSkel;
+                Repaint();
             }
 
-            if (GUILayout.Button("🔄 Reset Cam", EditorStyles.miniButton, GUILayout.Width(88), GUILayout.Height(20)))
+            GUI.backgroundColor = _showGizmos ? new Color(0.3f, 0.7f, 1.0f) : new Color(0.35f, 0.35f, 0.35f);
+            bool newShowGizmos = GUI.Toggle(gizmoRect, _showGizmos, "🎯 Gizmos", EditorStyles.miniButton);
+            if (newShowGizmos != _showGizmos)
+            {
+                _showGizmos = newShowGizmos;
+                Repaint();
+            }
+
+            GUI.backgroundColor = origColor;
+
+            // 2. Top-Right: Camera Reset, Active Bone Badge, Clear, Reset
+            float curX = rect.xMax - 8;
+
+            // 🔄 Reset Cam
+            curX -= 88;
+            Rect resetCamRect = new Rect(curX, rect.y + 8, 88, 22);
+            if (GUI.Button(resetCamRect, "🔄 Reset Cam", EditorStyles.miniButton))
             {
                 _previewDir = new Vector2(180f, 10f);
                 _previewDistance = 2.8f;
                 _previewPivot = _previewHipsTransform != null
                     ? new Vector3(0, _previewHipsTransform.position.y + 0.2f, 0)
                     : new Vector3(0, 1.0f, 0);
+                Repaint();
             }
 
-            EditorGUILayout.EndHorizontal();
-            GUILayout.EndArea();
+            if (_selectedJoint.HasValue)
+            {
+                curX -= 6; // gap
 
-            // Bottom-Left Hint overlay
-            Rect hintRect = new Rect(rect.x + 8, rect.y + rect.height - 22, 290, 18);
-            EditorGUI.DrawRect(hintRect, new Color(0.06f, 0.08f, 0.12f, 0.75f));
+                // Reset Bone Rotation button
+                curX -= 46;
+                Rect resetJointRect = new Rect(curX, rect.y + 8, 46, 22);
+                if (GUI.Button(resetJointRect, "Reset", EditorStyles.miniButton))
+                {
+                    _data.ResetJointToOriginal(_currentFrame, _selectedJoint.Value);
+                    ApplyCurrentFrameToPreview();
+                    Repaint();
+                }
+
+                curX -= 3; // gap
+
+                // Clear selection button
+                curX -= 44;
+                Rect clearRect = new Rect(curX, rect.y + 8, 44, 22);
+                if (GUI.Button(clearRect, "Clear", EditorStyles.miniButton))
+                {
+                    _selectedJoint = null;
+                    Repaint();
+                }
+
+                curX -= 6; // gap
+
+                // Active Bone Badge
+                string friendlyName = GetJointFriendlyName(_selectedJoint.Value);
+                string badgeText = $"🎯 {friendlyName}";
+                var badgeStyle = new GUIStyle(EditorStyles.miniBoldLabel)
+                {
+                    normal = { textColor = new Color(1.0f, 0.85f, 0.25f) },
+                    alignment = TextAnchor.MiddleCenter
+                };
+                Vector2 textSize = badgeStyle.CalcSize(new GUIContent(badgeText));
+                float badgeWidth = Mathf.Max(textSize.x + 14f, 115f);
+                curX -= badgeWidth;
+
+                Rect badgeRect = new Rect(curX, rect.y + 8, badgeWidth, 22);
+                EditorGUI.DrawRect(badgeRect, new Color(0.08f, 0.10f, 0.15f, 0.85f));
+                GUI.Label(badgeRect, badgeText, badgeStyle);
+            }
+
+            // 3. Bottom-Left Hint overlay
+            Rect hintRect = new Rect(rect.x + 8, rect.y + rect.height - 24, 310, 18);
+            EditorGUI.DrawRect(hintRect, new Color(0.06f, 0.08f, 0.12f, 0.80f));
             var hintStyle = new GUIStyle(EditorStyles.miniLabel)
             {
-                normal = { textColor = new Color(0.7f, 0.75f, 0.85f) },
+                normal = { textColor = new Color(0.75f, 0.80f, 0.90f) },
                 alignment = TextAnchor.MiddleLeft,
                 padding = new RectOffset(6, 0, 1, 0)
             };
