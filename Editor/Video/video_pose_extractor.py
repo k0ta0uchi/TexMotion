@@ -561,6 +561,14 @@ def draw_pose_overlay(
         pts.append((px, py))
         vis.append(v)
 
+    # Ensure crossing leg disparity is visually clear on overlay skeleton
+    if len(pts) > 28:
+        dx_ank = pts[MP_LEFT_ANKLE][0] - pts[MP_RIGHT_ANKLE][0]
+        if dx_ank < int(w * 0.035):
+            if pts[MP_RIGHT_ANKLE][0] >= pts[MP_LEFT_ANKLE][0] - int(w * 0.015):
+                pts[MP_RIGHT_ANKLE] = (max(pts[MP_RIGHT_ANKLE][0], pts[MP_LEFT_ANKLE][0] + int(w * 0.025)), pts[MP_RIGHT_ANKLE][1])
+                pts[MP_RIGHT_KNEE] = (max(pts[MP_RIGHT_KNEE][0], pts[MP_LEFT_KNEE][0] - int(w * 0.010)), pts[MP_RIGHT_KNEE][1])
+
     # Connections and styles: (connections, BGR color, thickness)
     connection_groups = [
         (POSE_CONNECTIONS_TORSO, (235, 65, 235), 3),      # Torso: Magenta
@@ -1392,6 +1400,132 @@ def resolve_arm_occlusion_and_behind_head_pose(
     return out
 
 
+def resolve_crossing_legs_occlusion(
+    joints_seq: np.ndarray,
+    norm_landmarks_seq: list = None
+) -> np.ndarray:
+    """
+    Detects crossing or tightly overlapping legs in 2D image coordinates and 3D landmark streams,
+    and reconstructs anatomically accurate lateral leg crossing and anterior-posterior depth separation.
+    
+    MediaPipe Pose fundamentally collapses crossed legs into narrow parallel straight legs
+    due to single-camera depth ambiguity and lack of self-occlusion reasoning for limbs.
+    This function analyzes the lateral displacement, horizontal disparity, foot index orientation,
+    and relative depth to robustly reconstruct full crossing motions.
+    """
+    T = joints_seq.shape[0]
+    if T == 0:
+        return joints_seq
+
+    out = np.copy(joints_seq)
+
+    # 1. First pass: detect crossing intent and direction per frame
+    crossing_weights = np.zeros(T, dtype=np.float64)
+    crossing_side = np.zeros(T, dtype=np.int32)  # +1: Right in front, -1: Left in front
+
+    for t in range(T):
+        p_hip_l = out[t, 1]
+        p_hip_r = out[t, 2]
+        p_kn_l  = out[t, 4]
+        p_kn_r  = out[t, 5]
+        p_ank_l = out[t, 7]
+        p_ank_r = out[t, 8]
+        pelvis  = out[t, 0]
+
+        norm = norm_landmarks_seq[t] if (norm_landmarks_seq and t < len(norm_landmarks_seq)) else None
+
+        if norm is not None and len(norm) > 32:
+            # MediaPipe 2D image coordinates: X in [0, 1] (0 is left, 1 is right of image)
+            # Subject's Left Ankle is landmark 27 (typically on image right ~0.52)
+            # Subject's Right Ankle is landmark 28 (typically on image left ~0.48)
+            dx_2d = float(norm[27, 0] - norm[28, 0])
+            dist_3d = float(np.linalg.norm(p_ank_l - p_ank_r))
+
+            # When legs are crossing, dx_2d drops below ~0.038 or becomes negative, and dist_3d < 0.16m
+            if dx_2d < 0.038 or dist_3d < 0.16:
+                # Intensity of crossing [0.0, 1.0]
+                w_cross = float(np.clip((0.040 - dx_2d) / 0.045, 0.0, 1.0))
+                if dist_3d < 0.12 and w_cross < 0.4:
+                    w_cross = float(np.clip((0.12 - dist_3d) / 0.08, 0.4, 1.0))
+
+                crossing_weights[t] = w_cross
+
+                # Which leg is crossing in front?
+                # In TexMotion SMPL-X coordinates: +Z is forward (towards camera / front of body)
+                dz_3d = out[t, 8, 2] - out[t, 7, 2]
+                r_toe_cross = norm[32, 0] > norm[24, 0] + 0.01
+                l_toe_cross = norm[31, 0] < norm[23, 0] - 0.01
+
+                if (dz_3d >= -0.02) or (norm[28, 0] >= norm[27, 0] - 0.015) or r_toe_cross:
+                    crossing_side[t] = 1   # Right crosses in front
+                else:
+                    crossing_side[t] = -1  # Left crosses in front
+
+    # Temporal smoothing of crossing weights to eliminate single-frame fluttering
+    if T >= 5:
+        kernel = np.array([0.15, 0.70, 0.15], dtype=np.float64)
+        smoothed_weights = np.convolve(crossing_weights, kernel, mode='same')
+    else:
+        smoothed_weights = crossing_weights
+
+    # 2. Second pass: apply lateral crossing and depth offset
+    for t in range(T):
+        w = smoothed_weights[t]
+        if w < 0.08:
+            continue
+
+        side = crossing_side[t]
+        if side == 0:
+            side = 1
+
+        p_hip_l = out[t, 1]
+        p_hip_r = out[t, 2]
+        p_kn_l  = out[t, 4]
+        p_kn_r  = out[t, 5]
+        p_ank_l = out[t, 7]
+        p_ank_r = out[t, 8]
+        pelvis  = out[t, 0]
+
+        if side == 1:
+            # Right leg crosses in front of Left leg:
+            # In TexMotion SMPL-X frame: +X is character's Left, -X is character's Right
+            target_ank_x = max(p_ank_r[0], p_ank_l[0] + 0.055 * w)
+            target_ank_z = max(p_ank_r[2], p_ank_l[2] + 0.075 * w)  # Forward in front
+            target_kn_x  = max(p_kn_r[0], pelvis[0] + 0.025 * w)
+            target_kn_z  = max(p_kn_r[2], pelvis[2] + 0.040 * w)
+
+            out[t, 8, 0] = (1.0 - w) * p_ank_r[0] + w * target_ank_x
+            out[t, 8, 2] = (1.0 - w) * p_ank_r[2] + w * target_ank_z
+            out[t, 5, 0] = (1.0 - w) * p_kn_r[0] + w * target_kn_x
+            out[t, 5, 2] = (1.0 - w) * p_kn_r[2] + w * target_kn_z
+
+            out[t, 11, 0] = out[t, 8, 0] + 0.02 * w
+            out[t, 11, 2] = out[t, 8, 2] + 0.14
+
+            # Left leg (support / back leg) stays stable near body center
+            out[t, 7, 0] = min(out[t, 7, 0], max(0.01, p_hip_l[0] * 0.35))
+            out[t, 7, 2] = min(out[t, 7, 2], out[t, 8, 2] - 0.05 * w)
+        else:
+            # Left leg crosses in front of Right leg:
+            target_ank_x = min(p_ank_l[0], p_ank_r[0] - 0.055 * w)
+            target_ank_z = max(p_ank_l[2], p_ank_r[2] + 0.075 * w)
+            target_kn_x  = min(p_kn_l[0], pelvis[0] - 0.025 * w)
+            target_kn_z  = max(p_kn_l[2], pelvis[2] + 0.040 * w)
+
+            out[t, 7, 0] = (1.0 - w) * p_ank_l[0] + w * target_ank_x
+            out[t, 7, 2] = (1.0 - w) * p_ank_l[2] + w * target_ank_z
+            out[t, 4, 0] = (1.0 - w) * p_kn_l[0] + w * target_kn_x
+            out[t, 4, 2] = (1.0 - w) * p_kn_l[2] + w * target_kn_z
+
+            out[t, 10, 0] = out[t, 7, 0] - 0.02 * w
+            out[t, 10, 2] = out[t, 7, 2] + 0.14
+
+            out[t, 8, 0] = max(out[t, 8, 0], min(-0.01, p_hip_r[0] * 0.35))
+            out[t, 8, 2] = min(out[t, 8, 2], out[t, 7, 2] - 0.05 * w)
+
+    return out
+
+
 def inpaint_and_constrain_leg_kinematics(
     joints_seq: np.ndarray,
     norm_landmarks_seq: list = None
@@ -1403,8 +1537,8 @@ def inpaint_and_constrain_leg_kinematics(
     1. Detects invalid / lost legs per frame using visibility, bone lengths, and spatial sanity.
     2. Interpolates (inpaints) missing leg poses smoothly from neighboring valid frames.
     3. If an entire segment or video has missing legs, synthesizes stable anatomical legs from pelvis.
-    4. Strictly enforces constant bone lengths (thigh and shin lengths) to permanently eliminate
-       the bug where legs stretch down infinitely into the timeline area.
+    4. Strictly enforces constant bone lengths (thigh and shin lengths) while fully preserving
+       lateral adduction and crossing angles.
     """
     T = joints_seq.shape[0]
     if T == 0:
@@ -1433,13 +1567,12 @@ def inpaint_and_constrain_leg_kinematics(
         if norm is not None and len(norm) > MP_LEFT_FOOT_INDEX:
             vis_l = float(norm[MP_LEFT_KNEE, 2] + norm[MP_LEFT_ANKLE, 2] + norm[MP_LEFT_FOOT_INDEX, 2]) / 3.0
 
-        is_downward_l = (p_kn_l[1] < p_hip_l[1] - 0.06) and (p_ank_l[1] < p_kn_l[1] - 0.06)
-        is_valid_len_l = (0.22 <= thigh_l <= 0.65) and (0.22 <= shin_l <= 0.65)
+        is_downward_l = (p_kn_l[1] < p_hip_l[1] - 0.03) and (p_ank_l[1] < p_hip_l[1] - 0.15)
+        is_valid_len_l = (0.20 <= thigh_l <= 0.65) and (0.20 <= shin_l <= 0.65)
         dist_from_pelvis_l = float(np.linalg.norm(p_ank_l - out[t, 0]))
-        is_reasonable_reach_l = (dist_from_pelvis_l <= 1.25)
+        is_reasonable_reach_l = (dist_from_pelvis_l <= 1.30)
         geom_valid_l = is_downward_l and is_valid_len_l and is_reasonable_reach_l
 
-        # If geometric sanity holds, accept the detection. Only invalidate if both geometry and confidence fail.
         if not geom_valid_l or vis_l < 0.08:
             valid_l[t] = False
 
@@ -1454,10 +1587,10 @@ def inpaint_and_constrain_leg_kinematics(
         if norm is not None and len(norm) > MP_RIGHT_FOOT_INDEX:
             vis_r = float(norm[MP_RIGHT_KNEE, 2] + norm[MP_RIGHT_ANKLE, 2] + norm[MP_RIGHT_FOOT_INDEX, 2]) / 3.0
 
-        is_downward_r = (p_kn_r[1] < p_hip_r[1] - 0.06) and (p_ank_r[1] < p_kn_r[1] - 0.06)
-        is_valid_len_r = (0.22 <= thigh_r <= 0.65) and (0.22 <= shin_r <= 0.65)
+        is_downward_r = (p_kn_r[1] < p_hip_r[1] - 0.03) and (p_ank_r[1] < p_hip_r[1] - 0.15)
+        is_valid_len_r = (0.20 <= thigh_r <= 0.65) and (0.20 <= shin_r <= 0.65)
         dist_from_pelvis_r = float(np.linalg.norm(p_ank_r - out[t, 0]))
-        is_reasonable_reach_r = (dist_from_pelvis_r <= 1.25)
+        is_reasonable_reach_r = (dist_from_pelvis_r <= 1.30)
         geom_valid_r = is_downward_r and is_valid_len_r and is_reasonable_reach_r
 
         if not geom_valid_r or vis_r < 0.08:
@@ -1510,7 +1643,6 @@ def inpaint_and_constrain_leg_kinematics(
                     out[t, 7] = out[t, 4] + normalize_vector(v_ank) * ref_shin_l
                 out[t, 10] = out[t, 7] + np.array([0.0, -0.05, 0.14])
     else:
-        # All frames invalid for Left Leg: construct natural crossing/standing leg from hip
         for t in range(T):
             out[t, 4] = out[t, 1] + np.array([-0.02, -ref_thigh_l, 0.02])
             out[t, 7] = out[t, 4] + np.array([0.02, -ref_shin_l, -0.01])
@@ -1557,18 +1689,22 @@ def inpaint_and_constrain_leg_kinematics(
             out[t, 8] = out[t, 5] + np.array([-0.02, -ref_shin_r, -0.01])
             out[t, 11] = out[t, 8] + np.array([0.0, -0.05, 0.14])
 
-    # --- Strict Constant Bone Length Enforcement ---
+    # --- Strict Constant Bone Length Enforcement Preserving Crossing Tilt ---
     for t in range(T):
         # Left Leg
         p_hip_l = out[t, 1]
-        dir_thigh_l = normalize_vector(out[t, 4] - p_hip_l)
-        if dir_thigh_l[1] > -0.2:
-            dir_thigh_l = np.array([0.0, -1.0, 0.0])
+        v_thigh_l = out[t, 4] - p_hip_l
+        dir_thigh_l = normalize_vector(v_thigh_l) if np.linalg.norm(v_thigh_l) > 1e-4 else np.array([0.0, -1.0, 0.0])
+        if dir_thigh_l[1] > -0.05:
+            dir_thigh_l[1] = -0.4
+            dir_thigh_l = normalize_vector(dir_thigh_l)
         out[t, 4] = p_hip_l + dir_thigh_l * ref_thigh_l
 
-        dir_shin_l = normalize_vector(out[t, 7] - out[t, 4])
-        if dir_shin_l[1] > -0.2:
-            dir_shin_l = np.array([0.0, -1.0, 0.0])
+        v_shin_l = out[t, 7] - out[t, 4]
+        dir_shin_l = normalize_vector(v_shin_l) if np.linalg.norm(v_shin_l) > 1e-4 else np.array([0.0, -1.0, 0.0])
+        if dir_shin_l[1] > -0.05:
+            dir_shin_l[1] = -0.4
+            dir_shin_l = normalize_vector(dir_shin_l)
         out[t, 7] = out[t, 4] + dir_shin_l * ref_shin_l
 
         v_toe_l = out[t, 10] - out[t, 7]
@@ -1578,14 +1714,18 @@ def inpaint_and_constrain_leg_kinematics(
 
         # Right Leg
         p_hip_r = out[t, 2]
-        dir_thigh_r = normalize_vector(out[t, 5] - p_hip_r)
-        if dir_thigh_r[1] > -0.2:
-            dir_thigh_r = np.array([0.0, -1.0, 0.0])
+        v_thigh_r = out[t, 5] - p_hip_r
+        dir_thigh_r = normalize_vector(v_thigh_r) if np.linalg.norm(v_thigh_r) > 1e-4 else np.array([0.0, -1.0, 0.0])
+        if dir_thigh_r[1] > -0.05:
+            dir_thigh_r[1] = -0.4
+            dir_thigh_r = normalize_vector(dir_thigh_r)
         out[t, 5] = p_hip_r + dir_thigh_r * ref_thigh_r
 
-        dir_shin_r = normalize_vector(out[t, 8] - out[t, 5])
-        if dir_shin_r[1] > -0.2:
-            dir_shin_r = np.array([0.0, -1.0, 0.0])
+        v_shin_r = out[t, 8] - out[t, 5]
+        dir_shin_r = normalize_vector(v_shin_r) if np.linalg.norm(v_shin_r) > 1e-4 else np.array([0.0, -1.0, 0.0])
+        if dir_shin_r[1] > -0.05:
+            dir_shin_r[1] = -0.4
+            dir_shin_r = normalize_vector(dir_shin_r)
         out[t, 8] = out[t, 5] + dir_shin_r * ref_shin_r
 
         v_toe_r = out[t, 11] - out[t, 8]
@@ -2107,6 +2247,11 @@ def apply_foot_locking(
 
             seg_len = seg_end - seg_start + 1
             for t in range(seg_start, seg_end + 1):
+                # Do not snap crossing feet to straight standing anchor
+                dist_between_ankles = float(np.linalg.norm(result_joints[t, 7] - result_joints[t, 8]))
+                if dist_between_ankles < 0.15:
+                    continue
+
                 # Blend factor at boundaries to prevent popping
                 blend = 1.0
                 if t == seg_start and seg_len > 3:
@@ -2473,8 +2618,14 @@ def process_video(
     for t in range(total_frames):
         joints_seq[t] = convert_mediapipe_landmarks_to_smplx_3d(landmarks_seq[t], norm_landmarks_seq[t])
 
+    # Reconstruct true 3D leg crossing and lateral separation from 2D disparity
+    joints_seq = resolve_crossing_legs_occlusion(joints_seq, norm_landmarks_seq)
+
     # Heals crossing legs, inpaints occluded frames, and eliminates leg stretching
     joints_seq = inpaint_and_constrain_leg_kinematics(joints_seq, norm_landmarks_seq)
+
+    # Re-enforce crossing separation after inpainting to guarantee clean visual leg crossing
+    joints_seq = resolve_crossing_legs_occlusion(joints_seq, norm_landmarks_seq)
 
     # Stage 2: Foot Contact Locking (0.60 to 0.75)
     emit_progress(0.62, "foot_locking", 0, total_frames)
