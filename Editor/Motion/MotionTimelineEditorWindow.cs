@@ -298,41 +298,95 @@ namespace TexMotion.Editor.Motion
 
         private void DrawEmptyState()
         {
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            EditorGUILayout.BeginVertical();
             GUILayout.FlexibleSpace();
 
             EditorGUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            EditorGUILayout.BeginVertical();
 
-            var labelStyle = new GUIStyle(EditorStyles.boldLabel)
+            // Centered Card Container (Width: 540)
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox, GUILayout.Width(540));
+            GUILayout.Space(24);
+
+            // Title
+            var titleStyle = new GUIStyle(EditorStyles.boldLabel)
             {
-                fontSize = 18,
+                fontSize = 19,
                 alignment = TextAnchor.MiddleCenter,
-                normal = { textColor = new Color(0.9f, 0.9f, 0.95f) }
+                wordWrap = true,
+                normal = { textColor = new Color(0.95f, 0.95f, 1.0f) }
             };
-            EditorGUILayout.LabelField("🎬 TexMotion Timeline & Frame Pose Editor", labelStyle, GUILayout.Height(30));
+            GUILayout.Label("TexMotion Timeline & Pose Editor", titleStyle);
 
-            var subStyle = new GUIStyle(EditorStyles.label)
+            GUILayout.Space(10);
+
+            // Subtitle / Description
+            var descStyle = new GUIStyle(EditorStyles.label)
             {
                 fontSize = 12,
                 alignment = TextAnchor.MiddleCenter,
                 wordWrap = true,
-                normal = { textColor = new Color(0.7f, 0.7f, 0.75f) }
+                normal = { textColor = new Color(0.72f, 0.72f, 0.78f) }
             };
-            EditorGUILayout.LabelField("No motion is currently loaded.\nGenerate motion from Text or extract from Video in TexMotion Studio to automatically start editing poses here.", subStyle, GUILayout.Width(500), GUILayout.Height(45));
+            GUILayout.Label("No motion is currently loaded in the timeline.\nGenerate a motion clip from Text or extract poses from Video in TexMotion Studio to start visual keyframe and bone posing here.", descStyle);
 
-            EditorGUILayout.Space(15);
+            GUILayout.Space(20);
+
+            // Quick Guide Box
+            EditorGUILayout.BeginVertical(EditorStyles.textArea);
+            GUILayout.Space(10);
+
+            var guideHeaderStyle = new GUIStyle(EditorStyles.miniBoldLabel)
+            {
+                fontSize = 11,
+                alignment = TextAnchor.MiddleCenter,
+                normal = { textColor = new Color(0.4f, 0.75f, 1.0f) }
+            };
+            GUILayout.Label("HOW TO GET STARTED", guideHeaderStyle);
+            GUILayout.Space(6);
+
+            var guideStepStyle = new GUIStyle(EditorStyles.miniLabel)
+            {
+                fontSize = 11,
+                alignment = TextAnchor.MiddleLeft,
+                wordWrap = true,
+                normal = { textColor = new Color(0.82f, 0.82f, 0.85f) }
+            };
+
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.Space(24);
+            EditorGUILayout.BeginVertical();
+            GUILayout.Label("1. Open TexMotion Studio and generate or extract a motion clip.", guideStepStyle);
+            GUILayout.Space(3);
+            GUILayout.Label("2. Preview the animation and click \"Edit in Timeline\".", guideStepStyle);
+            GUILayout.Space(3);
+            GUILayout.Label("3. Directly manipulate 3D joints, scrub frames, and save as .anim.", guideStepStyle);
+            EditorGUILayout.EndVertical();
+            GUILayout.Space(24);
+            EditorGUILayout.EndHorizontal();
+
+            GUILayout.Space(10);
+            EditorGUILayout.EndVertical();
+
+            GUILayout.Space(22);
+
+            // Action Button: Open TexMotion Studio
             EditorGUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("Open TexMotion Studio", GUILayout.Width(220), GUILayout.Height(38)))
+
+            GUI.backgroundColor = new Color(0.2f, 0.75f, 0.45f);
+            if (GUILayout.Button("✨ Open TexMotion Studio", GUILayout.Width(240), GUILayout.Height(38)))
             {
                 TexMotionWindow.ShowWindow();
             }
+            GUI.backgroundColor = Color.white;
+
             GUILayout.FlexibleSpace();
             EditorGUILayout.EndHorizontal();
 
+            GUILayout.Space(24);
             EditorGUILayout.EndVertical();
+
             GUILayout.FlexibleSpace();
             EditorGUILayout.EndHorizontal();
 
