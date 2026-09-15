@@ -2289,7 +2289,24 @@ namespace TexMotion.Editor
         {
             if (_currentMotionData == null) return;
 
-            Animator targetAnim = _targetAvatar != null ? _targetAvatar.GetComponent<Animator>() : null;
+            Animator targetAnim = null;
+            if (_targetAvatar != null)
+            {
+                targetAnim = _targetAvatar.GetComponent<Animator>();
+                if (targetAnim == null)
+                {
+                    targetAnim = _targetAvatar.GetComponentInChildren<Animator>();
+                }
+            }
+            if (targetAnim == null)
+            {
+                var anims = FindObjectsOfType<Animator>();
+                foreach (var a in anims)
+                {
+                    if (a.isHuman) { targetAnim = a; break; }
+                }
+            }
+
             bool isVideo = (_currentMotionData is VideoMotionData);
             string mName = isVideo ? _videoMotionName : _motionName;
             var hPose = isVideo ? _videoHandPose : _handPose;

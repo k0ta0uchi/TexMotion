@@ -304,7 +304,18 @@ namespace TexMotion.Editor.Motion
 
             // Info Badges
             string info = $"Frames: {_data.Frames} | {_data.Duration:F2}s ({_data.FrameRate:F0} FPS)";
-            EditorGUILayout.LabelField(info, EditorStyles.miniLabel, GUILayout.Width(180));
+            EditorGUILayout.LabelField(info, EditorStyles.miniLabel, GUILayout.Width(170));
+
+            // Target Avatar selector
+            EditorGUILayout.LabelField("Avatar:", EditorStyles.miniBoldLabel, GUILayout.Width(45));
+            var prevAvatar = _data.TargetAvatar;
+            _data.TargetAvatar = (Animator)EditorGUILayout.ObjectField(_data.TargetAvatar, typeof(Animator), true, GUILayout.Width(140));
+            if (prevAvatar != _data.TargetAvatar)
+            {
+                SetupPreviewInstance();
+                ApplyCurrentFrameToPreview();
+                Repaint();
+            }
 
             // Modification Status
             int modCount = _data.ModifiedFrameCount;
@@ -314,11 +325,11 @@ namespace TexMotion.Editor.Motion
                 {
                     normal = { textColor = new Color(1.0f, 0.75f, 0.25f) }
                 };
-                EditorGUILayout.LabelField($"● {modCount} modified frames", modStyle, GUILayout.Width(130));
+                EditorGUILayout.LabelField($"● {modCount} mod", modStyle, GUILayout.Width(80));
             }
             else
             {
-                EditorGUILayout.LabelField("✓ Unmodified", EditorStyles.miniLabel, GUILayout.Width(100));
+                EditorGUILayout.LabelField("✓ Clean", EditorStyles.miniLabel, GUILayout.Width(60));
             }
 
             GUILayout.FlexibleSpace();
@@ -422,6 +433,11 @@ namespace TexMotion.Editor.Motion
 
             InitPreviewUtility();
 
+            if (_previewInstance == null && _data != null && _data.TargetAvatar != null)
+            {
+                SetupPreviewInstance();
+            }
+
             // Handle Camera interaction (orbit, zoom, pan)
             int controlID = GUIUtility.GetControlID(FocusType.Passive);
             Event evt = Event.current;
@@ -440,9 +456,9 @@ namespace TexMotion.Editor.Motion
                     {
                         if (evt.button == 0) // Left click orbit
                         {
-                            _previewDir.x -= evt.delta.x * 0.7f;
-                            _previewDir.y += evt.delta.y * 0.7f;
-                            _previewDir.y = Mathf.Clamp(_previewDir.y, -85f, 85f);
+                            _previewDir.x -= evt.delta.x * 0.8f;
+                            _previewDir.y += evt.delta.y * 0.8f;
+                            _previewDir.y = Mathf.Clamp(_previewDir.y, -80f, 80f);
                         }
                         else if (evt.button == 1 || evt.button == 2) // Right / Middle click pan
                         {
@@ -463,7 +479,7 @@ namespace TexMotion.Editor.Motion
                 case EventType.ScrollWheel:
                     if (rect.Contains(evt.mousePosition))
                     {
-                        _previewDistance = Mathf.Clamp(_previewDistance + evt.delta.y * 0.15f, 0.5f, 15f);
+                        _previewDistance = Mathf.Clamp(_previewDistance + evt.delta.y * 0.15f, 0.8f, 10f);
                         evt.Use();
                         Repaint();
                     }
@@ -472,26 +488,35 @@ namespace TexMotion.Editor.Motion
 
             if (evt.type == EventType.Repaint)
             {
-                _previewUtility.BeginPreview(rect, GUIStyle.none);
-
-                // Setup Camera
-                Quaternion camRot = Quaternion.Euler(_previewDir.y, _previewDir.x, 0);
-                Vector3 camPos = _previewPivot - camRot * (Vector3.forward * _previewDistance);
-                _previewUtility.camera.transform.position = camPos;
-                _previewUtility.camera.transform.rotation = camRot;
-
-                _previewUtility.lights[0].transform.rotation = Quaternion.Euler(40f, 40f, 0);
-                _previewUtility.lights[1].transform.rotation = Quaternion.Euler(140f, -40f, 0);
-
-                if (_previewInstance != null)
+                if (_previewUtility != null && _previewInstance != null)
                 {
-                    _previewInstance.SetActive(true);
-                    _previewUtility.camera.Render();
-                    _previewInstance.SetActive(false);
-                }
+                    _previewUtility.BeginPreview(rect, GUIStyle.none);
 
-                Texture resultTex = _previewUtility.EndPreview();
-                GUI.DrawTexture(rect, resultTex, ScaleMode.StretchToFill, false);
+                    Quaternion camRot = Quaternion.Euler(_previewDir.y, _previewDir.x, 0);
+                    Vector3 camPos = _previewPivot + camRot * (Vector3.forward * _previewDistance);
+
+                    _previewUtility.camera.transform.position = camPos;
+                    _previewUtility.camera.transform.LookAt(_previewPivot);
+
+                    _previewUtility.lights[0].transform.rotation = Quaternion.Euler(40f, 40f, 0);
+                    _previewUtility.lights[1].transform.rotation = Quaternion.Euler(140f, -40f, 0);
+
+                    ApplyCurrentFrameToPreview();
+
+                    _previewUtility.Render(true);
+                    Texture resultTex = _previewUtility.EndPreview();
+                    GUI.DrawTexture(rect, resultTex, ScaleMode.StretchToFill, false);
+                }
+                else
+                {
+                    EditorGUI.DrawRect(rect, new Color(0.10f, 0.12f, 0.16f));
+                    var missingStyle = new GUIStyle(EditorStyles.boldLabel)
+                    {
+                        alignment = TextAnchor.MiddleCenter,
+                        normal = { textColor = new Color(0.95f, 0.65f, 0.2f) }
+                    };
+                    GUI.Label(rect, "⚠️ No Avatar Assigned\nPlease select a Humanoid Avatar in the toolbar above.", missingStyle);
+                }
 
                 // Overlay Camera Reset button in top-right of preview
                 Rect resetCamBtn = new Rect(rect.xMax - 95, rect.y + 8, 88, 22);
@@ -499,7 +524,9 @@ namespace TexMotion.Editor.Motion
                 {
                     _previewDir = new Vector2(180f, 10f);
                     _previewDistance = 2.8f;
-                    _previewPivot = new Vector3(0, 1.0f, 0);
+                    _previewPivot = _previewHipsTransform != null
+                        ? new Vector3(0, _previewHipsTransform.position.y + 0.2f, 0)
+                        : new Vector3(0, 1.0f, 0);
                 }
             }
         }
@@ -1098,60 +1125,91 @@ namespace TexMotion.Editor.Motion
 
         private void SetupPreviewInstance()
         {
-            if (_data == null || _data.TargetAvatar == null)
+            if (_previewUtility == null) InitPreviewUtility();
+
+            if (_data == null) return;
+
+            if (_data.TargetAvatar == null)
             {
                 // Auto-detect avatar if not set
-                var anim = FindObjectOfType<Animator>();
-                if (anim != null && anim.isHuman)
+                var anims = FindObjectsOfType<Animator>();
+                foreach (var a in anims)
                 {
-                    _data.TargetAvatar = anim;
+                    if (a.isHuman)
+                    {
+                        _data.TargetAvatar = a;
+                        break;
+                    }
                 }
             }
 
-            if (_data == null || _data.TargetAvatar == null) return;
+            if (_data.TargetAvatar == null)
+            {
+                CleanupPreviewInstance();
+                return;
+            }
 
             CleanupPreviewInstance();
 
             _previewInstance = Instantiate(_data.TargetAvatar.gameObject, Vector3.zero, Quaternion.identity);
             _previewInstance.hideFlags = HideFlags.HideAndDontSave;
 
-            var animComponent = _previewInstance.GetComponent<Animator>();
-            if (animComponent != null)
+            var animators = _previewInstance.GetComponentsInChildren<Animator>();
+            foreach (var a in animators)
             {
-                animComponent.enabled = false;
+                a.enabled = false;
             }
 
-            // Disable unnecessary components on preview clone
+            var colliders = _previewInstance.GetComponentsInChildren<Collider>();
+            foreach (var c in colliders) DestroyImmediate(c);
+
+            var rbs = _previewInstance.GetComponentsInChildren<Rigidbody>();
+            foreach (var r in rbs) DestroyImmediate(r);
+
+            // Disable all MonoBehaviour components on clone
             foreach (var comp in _previewInstance.GetComponentsInChildren<MonoBehaviour>())
             {
                 comp.enabled = false;
             }
-            foreach (var col in _previewInstance.GetComponentsInChildren<Collider>())
-            {
-                col.enabled = false;
-            }
 
-            // Cache SMPL-X to Avatar bone mappings
+            // Cache SMPL-X to Avatar bone mappings using exact transform hierarchy paths
             _previewBoneMap.Clear();
             _previewInitialRotations.Clear();
 
-            if (animComponent != null)
+            var origAnim = _data.TargetAvatar;
+            if (origAnim != null && origAnim.isHuman)
             {
-                foreach (var kvp in SmplxJointDefinitions.SmplxToHumanBodyBones)
+                Transform origHips = origAnim.GetBoneTransform(HumanBodyBones.Hips);
+                if (origHips != null)
                 {
-                    Transform bone = animComponent.GetBoneTransform(kvp.Value);
-                    if (bone != null)
+                    string hipsPath = AnimationUtility.CalculateTransformPath(origHips, _data.TargetAvatar.transform);
+                    _previewHipsTransform = _previewInstance.transform.Find(hipsPath);
+                    if (_previewHipsTransform != null)
                     {
-                        _previewBoneMap[kvp.Key] = bone;
-                        _previewInitialRotations[kvp.Key] = bone.localRotation;
+                        _previewInitialHipsPos = _previewHipsTransform.localPosition;
+                        _previewPivot = new Vector3(0, _previewHipsTransform.position.y + 0.2f, 0);
                     }
                 }
 
-                _previewHipsTransform = animComponent.GetBoneTransform(HumanBodyBones.Hips);
-                _previewInitialHipsPos = _previewHipsTransform != null ? _previewHipsTransform.localPosition : Vector3.zero;
+                foreach (var kvp in SmplxJointDefinitions.SmplxToHumanBodyBones)
+                {
+                    Transform origBone = origAnim.GetBoneTransform(kvp.Value);
+                    if (origBone != null)
+                    {
+                        string bonePath = AnimationUtility.CalculateTransformPath(origBone, _data.TargetAvatar.transform);
+                        Transform cloneBone = _previewInstance.transform.Find(bonePath);
+                        if (cloneBone != null)
+                        {
+                            _previewBoneMap[kvp.Key] = cloneBone;
+                            _previewInitialRotations[kvp.Key] = cloneBone.localRotation;
+                        }
+                    }
+                }
             }
 
-            _previewInstance.SetActive(false);
+            // CRITICAL: Register the clone GameObject with PreviewRenderUtility!
+            _previewUtility.AddSingleGO(_previewInstance);
+            ApplyCurrentFrameToPreview();
         }
 
         private void CleanupPreviewInstance()
