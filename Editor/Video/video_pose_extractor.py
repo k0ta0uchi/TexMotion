@@ -1209,7 +1209,7 @@ def apply_anatomical_joint_limits(local_rotations: np.ndarray) -> np.ndarray:
         raise ValueError(f"apply_anatomical_joint_limits expects 2D or 3D array, got shape {local_rotations.shape}")
 # ============================================================================
 
-def convert_mediapipe_landmarks_to_smplx_3d(mp_landmarks: np.ndarray) -> np.ndarray:
+def convert_mediapipe_landmarks_to_smplx_3d(mp_landmarks: np.ndarray, norm_landmarks: np.ndarray = None) -> np.ndarray:
     """
     Converts 33 MediaPipe 3D world landmarks into 22 SMPL-X joint 3D positions.
     Coordinate frame conversion:
@@ -1283,7 +1283,99 @@ def convert_mediapipe_landmarks_to_smplx_3d(mp_landmarks: np.ndarray) -> np.ndar
     joints[8] = lm[MP_RIGHT_ANKLE]
     joints[11] = lm[MP_RIGHT_FOOT_INDEX]
 
+    # Resolve behind-the-head and behind-the-back arm occlusions
+    joints = resolve_arm_occlusion_and_behind_head_pose(joints, norm_landmarks)
+
     return joints
+
+
+def resolve_arm_occlusion_and_behind_head_pose(
+    joints: np.ndarray,
+    norm_landmarks: np.ndarray = None
+) -> np.ndarray:
+    """
+    Solves behind-the-head and behind-the-back arm occlusion failure cases in MediaPipe.
+    When a subject places their hands behind their head (e.g. resting head in hands, sit-ups, stretches):
+    - Frontal camera loses line-of-sight to the wrists and hands (self-occlusion).
+    - MediaPipe often hallucinates and collapses the wrists onto the nose/mouth in front of the face,
+      while pulling elbows inward toward the ears/cheeks, causing the avatar's arms to shrivel into the chest.
+
+    This function detects this specific geometric collapse pattern:
+    1. Upper arm is raised / elevated near or above shoulder height.
+    2. Wrist has low visibility OR wrist is collapsed into the head volume (X near center, Z in front of face).
+    3. Reconstructs anatomically sound 3D elbow and wrist positions behind the head (-Z in SMPL-X frame).
+    """
+    out = np.copy(joints)
+    head = out[15]
+    neck = out[12]
+    pelvis = out[0]
+    l_sh = out[16]
+    r_sh = out[17]
+
+    head_radius = 0.18
+
+    # --- Left Arm Behind-the-Head Occlusion Check ---
+    l_el = out[18]
+    l_wr = out[20]
+
+    vis_l_wr = norm_landmarks[MP_LEFT_WRIST, 2] if (norm_landmarks is not None and len(norm_landmarks) > MP_LEFT_WRIST) else 1.0
+    vis_l_el = norm_landmarks[MP_LEFT_ELBOW, 2] if (norm_landmarks is not None and len(norm_landmarks) > MP_LEFT_ELBOW) else 1.0
+
+    # Is the upper arm raised? (Elbow Y near or above shoulder height in SMPL-X +Y up)
+    l_arm_raised = (l_el[1] >= l_sh[1] - 0.14)
+    # Is the wrist collapsed into the head volume (X near center, Y near head/neck)?
+    l_wr_in_head_region = (abs(l_wr[0] - head[0]) < head_radius and abs(l_wr[1] - head[1]) < 0.22)
+    # Is the wrist in front of the head (+Z in SMPL-X)?
+    l_wr_in_front_of_head = (l_wr[2] >= head[2] - 0.05)
+
+    if l_arm_raised and l_wr_in_head_region and (vis_l_wr < 0.75 or l_wr_in_front_of_head):
+        # Target wrist: placed behind the occipital / neck region (-Z in SMPL-X)
+        out[20, 0] = head[0] + 0.05   # slightly left of midline (+X)
+        out[20, 1] = head[1] - 0.04   # back of skull / upper neck
+        out[20, 2] = head[2] - 0.14   # BEHIND head (-Z in SMPL-X)
+
+        # Check if elbow also collapsed inward toward ears / cheeks
+        l_upper_arm_len = 0.28
+        if l_el[0] < l_sh[0] + 0.08:
+            # Reconstruct natural flared outward-upward elbow position
+            flair_dir = normalize_vector(np.array([0.85, 0.45, -0.28]))
+            out[18] = l_sh + flair_dir * l_upper_arm_len
+        else:
+            out[18, 2] = min(out[18, 2], head[2] - 0.05)
+
+    # --- Right Arm Behind-the-Head Occlusion Check ---
+    r_el = out[19]
+    r_wr = out[21]
+
+    vis_r_wr = norm_landmarks[MP_RIGHT_WRIST, 2] if (norm_landmarks is not None and len(norm_landmarks) > MP_RIGHT_WRIST) else 1.0
+    vis_r_el = norm_landmarks[MP_RIGHT_ELBOW, 2] if (norm_landmarks is not None and len(norm_landmarks) > MP_RIGHT_ELBOW) else 1.0
+
+    r_arm_raised = (r_el[1] >= r_sh[1] - 0.14)
+    r_wr_in_head_region = (abs(r_wr[0] - head[0]) < head_radius and abs(r_wr[1] - head[1]) < 0.22)
+    r_wr_in_front_of_head = (r_wr[2] >= head[2] - 0.05)
+
+    if r_arm_raised and r_wr_in_head_region and (vis_r_wr < 0.75 or r_wr_in_front_of_head):
+        out[21, 0] = head[0] - 0.05   # slightly right of midline (-X)
+        out[21, 1] = head[1] - 0.04   # back of skull / upper neck
+        out[21, 2] = head[2] - 0.14   # BEHIND head (-Z in SMPL-X)
+
+        r_upper_arm_len = 0.28
+        if r_el[0] > r_sh[0] - 0.08:
+            flair_dir_r = normalize_vector(np.array([-0.85, 0.45, -0.28]))
+            out[19] = r_sh + flair_dir_r * r_upper_arm_len
+        else:
+            out[19, 2] = min(out[19, 2], head[2] - 0.05)
+
+    # --- Behind-the-Back Occlusion Check (Hands Behind Lower Back / Hips) ---
+    l_wr_near_pelvis = (abs(l_wr[0] - pelvis[0]) < 0.22 and abs(l_wr[1] - pelvis[1]) < 0.20)
+    if l_wr_near_pelvis and vis_l_wr < 0.65 and l_wr[2] >= pelvis[2]:
+        out[20, 2] = pelvis[2] - 0.12
+
+    r_wr_near_pelvis = (abs(r_wr[0] - pelvis[0]) < 0.22 and abs(r_wr[1] - pelvis[1]) < 0.20)
+    if r_wr_near_pelvis and vis_r_wr < 0.65 and r_wr[2] >= pelvis[2]:
+        out[21, 2] = pelvis[2] - 0.12
+
+    return out
 
 
 # ============================================================================
@@ -2059,6 +2151,7 @@ def process_video(
     cap_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     landmarks_seq = []
+    norm_landmarks_seq = []
     frame_confidences = []
     last_valid_landmarks = None
     last_valid_norm_landmarks = None
@@ -2103,6 +2196,7 @@ def process_video(
             if not ret or frame is None:
                 if last_valid_landmarks is not None:
                     landmarks_seq.append(last_valid_landmarks)
+                    norm_landmarks_seq.append(last_valid_norm_landmarks)
                     frame_confidences.append(0.5)
                 continue
 
@@ -2129,6 +2223,7 @@ def process_video(
                     conf = 0.5
 
             landmarks_seq.append(frame_landmarks)
+            norm_landmarks_seq.append(norm_landmarks)
             frame_confidences.append(float(np.clip(conf, 0.0, 1.0)))
 
             # Render and write overlay frame
@@ -2155,10 +2250,10 @@ def process_video(
     if total_frames == 0:
         raise RuntimeError("No frames could be extracted from the video.")
 
-    # Convert 33 MediaPipe landmarks to 22 SMPL-X 3D Joint positions
+    # Convert 33 MediaPipe landmarks to 22 SMPL-X 3D Joint positions with occlusion reasoning
     joints_seq = np.zeros((total_frames, SMPLX_JOINT_COUNT, 3), dtype=np.float64)
     for t in range(total_frames):
-        joints_seq[t] = convert_mediapipe_landmarks_to_smplx_3d(landmarks_seq[t])
+        joints_seq[t] = convert_mediapipe_landmarks_to_smplx_3d(landmarks_seq[t], norm_landmarks_seq[t])
 
     # Stage 2: Foot Contact Locking (0.60 to 0.75)
     emit_progress(0.62, "foot_locking", 0, total_frames)

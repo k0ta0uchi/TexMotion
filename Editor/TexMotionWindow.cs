@@ -59,7 +59,7 @@ namespace TexMotion.Editor
         private bool _videoFootLocking = true;
         private float _videoTrimStart = 0.0f;
         private float _videoTrimEnd = 0.0f;
-        private int _videoModelComplexity = 1;
+        private int _videoModelComplexity = 2; // Default to High Precision for best occlusion resistance
         private float _videoMinConfidenceThreshold = 0.3f;
         private string _videoMotionName = "VideoMotion";
         private HandPoseType _videoHandPose = HandPoseType.NaturalRelaxed;
@@ -1279,8 +1279,12 @@ namespace TexMotion.Editor
             _videoSmoothing = EditorGUILayout.Toggle("Temporal Smoothing (Savitzky-Golay)", _videoSmoothing);
             _videoFootLocking = EditorGUILayout.Toggle("Foot Locking & Floor Snapping", _videoFootLocking);
             _videoModelComplexity = EditorGUILayout.IntPopup("MediaPipe Complexity", _videoModelComplexity,
-                new string[] { "0 - Fast / Lightweight", "1 - Balanced (Recommended)", "2 - High Precision" },
+                new string[] { "0 - Fast / Lightweight", "1 - Balanced", "2 - High Precision (Best for Occlusions / Complex Poses)" },
                 new int[] { 0, 1, 2 });
+            if (_videoModelComplexity == 2)
+            {
+                EditorGUILayout.HelpBox("💡 Complexity 2 uses MediaPipe Heavy model with deep contextual occlusion reasoning (best when hands are behind head or back).", MessageType.None);
+            }
             _videoMinConfidenceThreshold = EditorGUILayout.Slider("Min Confidence Cutoff", _videoMinConfidenceThreshold, 0.0f, 0.8f);
 
             EditorGUILayout.EndVertical();
