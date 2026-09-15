@@ -359,13 +359,61 @@ namespace TexMotion.Editor.Motion
             // Target Avatar selector
             EditorGUILayout.LabelField("Avatar:", EditorStyles.miniBoldLabel, GUILayout.Width(45));
             var prevAvatar = _data.TargetAvatar;
-            _data.TargetAvatar = (Animator)EditorGUILayout.ObjectField(_data.TargetAvatar, typeof(Animator), true, GUILayout.Width(140));
+            _data.TargetAvatar = (Animator)EditorGUILayout.ObjectField(_data.TargetAvatar, typeof(Animator), true, GUILayout.Width(130));
             if (prevAvatar != _data.TargetAvatar)
             {
                 SetupPreviewInstance();
                 ApplyCurrentFrameToPreview();
                 Repaint();
             }
+
+            GUILayout.Space(8);
+
+            // --- Top Header Playback Controls ---
+            if (GUILayout.Button(new GUIContent("|◀", "First Frame (Home)"), EditorStyles.toolbarButton, GUILayout.Width(24)))
+            {
+                SetCurrentFrame(0);
+            }
+            if (GUILayout.Button(new GUIContent("◀", "Previous Frame (Left Arrow)"), EditorStyles.toolbarButton, GUILayout.Width(22)))
+            {
+                SetCurrentFrame(_currentFrame - 1);
+            }
+
+            GUI.backgroundColor = _isPlaying ? new Color(0.95f, 0.65f, 0.2f) : new Color(0.3f, 0.85f, 0.45f);
+            string headerPlayText = _isPlaying ? "⏸ Pause" : "▶ Play";
+            if (GUILayout.Button(new GUIContent(headerPlayText, "Toggle Playback (Space)"), EditorStyles.toolbarButton, GUILayout.Width(68)))
+            {
+                TogglePlay();
+            }
+            GUI.backgroundColor = Color.white;
+
+            if (GUILayout.Button(new GUIContent("▶", "Next Frame (Right Arrow)"), EditorStyles.toolbarButton, GUILayout.Width(22)))
+            {
+                SetCurrentFrame(_currentFrame + 1);
+            }
+            if (GUILayout.Button(new GUIContent("▶|", "Last Frame (End)"), EditorStyles.toolbarButton, GUILayout.Width(24)))
+            {
+                SetCurrentFrame(_data.Frames - 1);
+            }
+
+            _isLoop = GUILayout.Toggle(_isLoop, new GUIContent("🔁", "Loop Playback"), EditorStyles.toolbarButton, GUILayout.Width(28));
+
+            // Header Playback Speed (0.1x step)
+            EditorGUILayout.LabelField("Speed:", EditorStyles.miniLabel, GUILayout.Width(38));
+            if (GUILayout.Button(new GUIContent("-", "Decrease Speed (-0.1x)"), EditorStyles.toolbarButton, GUILayout.Width(18)))
+            {
+                _playbackSpeed = Mathf.Max(0.1f, Mathf.Round((_playbackSpeed - 0.1f) * 10f) / 10f);
+            }
+            if (GUILayout.Button(new GUIContent($"{_playbackSpeed:F1}x", "Click to reset to 1.0x"), EditorStyles.toolbarButton, GUILayout.Width(38)))
+            {
+                _playbackSpeed = 1.0f;
+            }
+            if (GUILayout.Button(new GUIContent("+", "Increase Speed (+0.1x)"), EditorStyles.toolbarButton, GUILayout.Width(18)))
+            {
+                _playbackSpeed = Mathf.Min(3.0f, Mathf.Round((_playbackSpeed + 0.1f) * 10f) / 10f);
+            }
+
+            GUILayout.Space(8);
 
             // Modification Status
             int modCount = _data.ModifiedFrameCount;
@@ -1010,6 +1058,30 @@ namespace TexMotion.Editor.Motion
                 Repaint();
             }
 
+            // Step Back
+            Rect hudPrevRect = new Rect(rect.x + 176, rect.y + 8, 24, 22);
+            if (GUI.Button(hudPrevRect, new GUIContent("◀", "Previous Frame"), EditorStyles.miniButtonLeft))
+            {
+                SetCurrentFrame(_currentFrame - 1);
+            }
+
+            // Play / Pause Toggle in HUD
+            Rect hudPlayRect = new Rect(rect.x + 200, rect.y + 8, 70, 22);
+            GUI.backgroundColor = _isPlaying ? new Color(0.95f, 0.65f, 0.2f) : new Color(0.3f, 0.85f, 0.45f);
+            string hudPlayIcon = _isPlaying ? "⏸ Pause" : "▶ Play";
+            if (GUI.Button(hudPlayRect, new GUIContent(hudPlayIcon, "Toggle Playback (Space)"), EditorStyles.miniButtonMid))
+            {
+                TogglePlay();
+            }
+            GUI.backgroundColor = origColor;
+
+            // Step Forward
+            Rect hudNextRect = new Rect(rect.x + 270, rect.y + 8, 24, 22);
+            if (GUI.Button(hudNextRect, new GUIContent("▶", "Next Frame"), EditorStyles.miniButtonRight))
+            {
+                SetCurrentFrame(_currentFrame + 1);
+            }
+
             GUI.backgroundColor = origColor;
 
             // 2. Top-Right: Camera Reset, Active Bone Badge, Clear, Reset
@@ -1519,17 +1591,32 @@ namespace TexMotion.Editor.Motion
 
             EditorGUILayout.Space(8);
 
-            // Playback Speed
-            EditorGUILayout.LabelField("Speed:", EditorStyles.miniLabel, GUILayout.Width(40));
-            string[] speeds = new string[] { "0.25x", "0.5x", "1.0x", "2.0x" };
-            float[] speedVals = new float[] { 0.25f, 0.5f, 1.0f, 2.0f };
-            int curSpeedIdx = 2;
-            for (int s = 0; s < speedVals.Length; s++)
+            // Playback Speed (0.1x step)
+            EditorGUILayout.LabelField("Speed:", EditorStyles.miniBoldLabel, GUILayout.Width(44));
+
+            // Decrease by 0.1x
+            if (GUILayout.Button(new GUIContent("-0.1", "Decrease Speed by 0.1x"), EditorStyles.miniButtonLeft, GUILayout.Width(36), GUILayout.Height(28)))
             {
-                if (Mathf.Abs(_playbackSpeed - speedVals[s]) < 0.05f) curSpeedIdx = s;
+                _playbackSpeed = Mathf.Max(0.1f, Mathf.Round((_playbackSpeed - 0.1f) * 10f) / 10f);
             }
-            int newSpeedIdx = EditorGUILayout.Popup(curSpeedIdx, speeds, GUILayout.Width(65), GUILayout.Height(26));
-            _playbackSpeed = speedVals[newSpeedIdx];
+
+            // Current speed indicator & click-to-reset button
+            GUI.backgroundColor = Mathf.Approximately(_playbackSpeed, 1.0f) ? Color.white : new Color(1.0f, 0.9f, 0.5f);
+            if (GUILayout.Button(new GUIContent($"{_playbackSpeed:F1}x", "Click to reset speed to 1.0x"), EditorStyles.miniButtonMid, GUILayout.Width(46), GUILayout.Height(28)))
+            {
+                _playbackSpeed = 1.0f;
+            }
+            GUI.backgroundColor = Color.white;
+
+            // Increase by 0.1x
+            if (GUILayout.Button(new GUIContent("+0.1", "Increase Speed by 0.1x"), EditorStyles.miniButtonRight, GUILayout.Width(36), GUILayout.Height(28)))
+            {
+                _playbackSpeed = Mathf.Min(3.0f, Mathf.Round((_playbackSpeed + 0.1f) * 10f) / 10f);
+            }
+
+            // 0.1x step slider (0.1 to 3.0)
+            float newSpeedVal = EditorGUILayout.Slider(_playbackSpeed, 0.1f, 3.0f, GUILayout.Width(110));
+            _playbackSpeed = Mathf.Round(newSpeedVal * 10f) / 10f;
 
             GUILayout.FlexibleSpace();
 
