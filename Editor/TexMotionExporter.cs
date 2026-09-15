@@ -22,9 +22,19 @@ namespace TexMotion.Editor
 
         public static void ExportPackageBatch()
         {
+            string workspacePackage = @"C:\Workspace\TexMotion\TexMotion.unitypackage";
+            ExportPackageTo(workspacePackage);
+
             string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
             string outputPath = Path.Combine(projectRoot, PackageFileName);
-            ExportPackageTo(outputPath);
+            if (!string.Equals(outputPath, workspacePackage, StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    File.Copy(workspacePackage, outputPath, true);
+                }
+                catch {}
+            }
         }
 
         public static void ExportPackageTo(string outputPath)
@@ -62,10 +72,16 @@ namespace TexMotion.Editor
             }
 
             Debug.Log($"[TexMotion] Exporting package to: {outputPath}");
+            ExportPackageOptions options = ExportPackageOptions.Recurse;
+            if (!Application.isBatchMode)
+            {
+                options |= ExportPackageOptions.Interactive;
+            }
+
             AssetDatabase.ExportPackage(
                 existingAssets.ToArray(),
                 outputPath,
-                ExportPackageOptions.Recurse | ExportPackageOptions.Interactive
+                options
             );
             Debug.Log("[TexMotion] Export complete!");
         }

@@ -35,11 +35,41 @@ ehthumbs.db
 Thumbs.db
 [Dd]esktop.ini
 
-# Workflow and local temporary files
+# Python runtime & byte-code
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc.meta
+__pycache__.meta
+
+# Media & Video files (Do not commit test/input/output videos into git)
+*.mp4
+*.mp4.meta
+*.mov
+*.mov.meta
+*.avi
+*.avi.meta
+*.webm
+*.webm.meta
+*.mkv
+*.mkv.meta
+
+# Temporary, test, and workflow files
 .gemini_workflow/
 scratch/
 *.tmp
 *.log
+*.log.meta
+test_*.json
+test_*.json.meta
+test_*.mp4
+test_*.mp4.meta
+test_*.md
+test_*.md.meta
+
+# Working notes and guidelines
+pose_extraction_*.md
+pose_extraction_*.md.meta
 
 # Large downloaded model files (models should be downloaded via UI)
 *.gguf

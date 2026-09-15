@@ -21,6 +21,9 @@ namespace TexMotion.Editor
         public bool UseCustomLocalPath = false;
         public string CustomLocalModelDirectory = "";
 
+        [Header("Python Video Pose Extraction")]
+        public string CustomPythonExecutablePath = "";
+
         public string GetDefaultCacheDirectory()
         {
             string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TexMotion", "Models");

@@ -17,6 +17,7 @@ namespace TexMotion.Editor.Motion
         public HandPoseType HandPose;
         public FaceEmotionType FaceEmotion;
         public float EmotionIntensity;
+        public float MinConfidenceThreshold; // Optional confidence filter for VideoMotionData
 
         public static AnimationBuildOptions CreateDefault(
             string clipName = "TexMotion_Anim",
@@ -34,17 +35,29 @@ namespace TexMotion.Editor.Motion
                 TargetAvatar = null,
                 HandPose = handPose,
                 FaceEmotion = faceEmotion,
-                EmotionIntensity = 1.0f
+                EmotionIntensity = 1.0f,
+                MinConfidenceThreshold = 0f
             };
         }
     }
 
     /// <summary>
-    /// Converts generated SMPL-X22 motion data into native Unity Humanoid Muscle AnimationClip assets
+    /// Converts generated SMPL-X22 motion data or video-extracted motion data into native Unity Humanoid Muscle AnimationClip assets
     /// for 100% reliable VRChat Action Layer playback and universal avatar compatibility.
     /// </summary>
     public static class AnimationClipBuilder
     {
+        /// <summary>
+        /// Builds an AnimationClip directly from video-extracted motion data.
+        /// </summary>
+        public static AnimationClip BuildAnimationClip(VideoMotionData videoMotionData, AnimationBuildOptions options)
+        {
+            return BuildAnimationClip((GeneratedMotionData)videoMotionData, options);
+        }
+
+        /// <summary>
+        /// Builds an AnimationClip from Kimodo text diffusion or video motion data.
+        /// </summary>
         public static AnimationClip BuildAnimationClip(GeneratedMotionData motionData, AnimationBuildOptions options)
         {
             if (motionData == null || motionData.Frames <= 0)
@@ -52,19 +65,27 @@ namespace TexMotion.Editor.Motion
                 throw new ArgumentException("Invalid motion data.");
             }
 
+            int frames = motionData.Frames;
+            int jointCount = motionData.JointCount > 0 ? motionData.JointCount : SmplxJointDefinitions.JointCount;
+
+            // Enforce quaternion hemisphere continuity on input rotations
+            EnforceHemisphereContinuity(motionData.LocalRotations, frames, jointCount);
+
+            float effectiveSpeed = options.Speed > 0f ? options.Speed : 1.0f;
+            float baseFrameRate = motionData.FrameRate > 0f ? motionData.FrameRate : 30.0f;
+
             var clip = new AnimationClip
             {
                 name = string.IsNullOrEmpty(options.ClipName) ? "TexMotion_Generated" : options.ClipName,
-                frameRate = motionData.FrameRate * options.Speed
+                frameRate = baseFrameRate * effectiveSpeed
             };
 
             float dt = 1.0f / clip.frameRate;
-            int frames = motionData.Frames;
 
             if (options.TargetAvatar != null && options.TargetAvatar.isHuman && options.TargetAvatar.avatar != null)
             {
                 BuildHumanoidMuscleCurves(clip, motionData, options, dt, frames);
-                BuildFaceCurves(clip, options, dt, frames);
+                BuildFaceCurves(clip, motionData, options, dt, frames);
             }
             else
             {
@@ -99,12 +120,13 @@ namespace TexMotion.Editor.Motion
             GameObject tempClone = UnityEngine.Object.Instantiate(animator.gameObject, Vector3.zero, Quaternion.identity);
             tempClone.hideFlags = HideFlags.HideAndDontSave;
 
+            HumanPoseHandler poseHandler = null;
             try
             {
                 var cloneAnim = tempClone.GetComponent<Animator>();
                 cloneAnim.enabled = false;
 
-                // Cache bone transforms & initial rotations
+                // 1. Cache body bone transforms & initial rotations
                 var boneMap = new Dictionary<SmplxJoint, Transform>();
                 var initialRotations = new Dictionary<SmplxJoint, Quaternion>();
 
@@ -118,10 +140,17 @@ namespace TexMotion.Editor.Motion
                     }
                 }
 
+                // 2. Cache finger bone transforms & initial rest rotations to PREVENT compounding accumulation
+                var fingerBoneMap = new Dictionary<HumanBodyBones, Transform>();
+                var initialFingerRotations = new Dictionary<HumanBodyBones, Quaternion>();
+
+                CacheFingerBones(cloneAnim, HandPosePresets.LeftFingerBones, fingerBoneMap, initialFingerRotations);
+                CacheFingerBones(cloneAnim, HandPosePresets.RightFingerBones, fingerBoneMap, initialFingerRotations);
+
                 Transform hips = cloneAnim.GetBoneTransform(HumanBodyBones.Hips);
                 Vector3 initialHipsPos = hips != null ? hips.localPosition : Vector3.zero;
 
-                var poseHandler = new HumanPoseHandler(cloneAnim.avatar, tempClone.transform);
+                poseHandler = new HumanPoseHandler(cloneAnim.avatar, tempClone.transform);
                 var humanPose = new HumanPose();
 
                 int muscleCount = HumanTrait.MuscleCount;
@@ -136,31 +165,65 @@ namespace TexMotion.Editor.Motion
                 var rootRotZ = new AnimationCurve();
                 var rootRotW = new AnimationCurve();
 
-                Vector3 firstFramePos = motionData.RootPositions.Length > 0 ? motionData.RootPositions[0] : Vector3.zero;
+                Vector3 firstFramePos = (motionData.RootPositions != null && motionData.RootPositions.Length > 0)
+                    ? motionData.RootPositions[0]
+                    : Vector3.zero;
+
+                // Track previous rotations for quaternion hemisphere continuity
+                var prevBoneRotations = new Dictionary<SmplxJoint, Quaternion>();
+                Quaternion prevBodyRot = Quaternion.identity;
+                bool hasPrevBodyRot = false;
+
+                VideoMotionData videoData = motionData as VideoMotionData;
+                float effectiveSpeed = options.Speed > 0f ? options.Speed : 1.0f;
 
                 for (int t = 0; t < frames; t++)
                 {
-                    float time = t * dt;
+                    // Confidence filtering for video-extracted motion
+                    if (videoData != null && options.MinConfidenceThreshold > 0f)
+                    {
+                        // Always keep first and last frame for curve duration boundaries
+                        if (t > 0 && t < frames - 1 && videoData.GetFrameConfidence(t) < options.MinConfidenceThreshold)
+                        {
+                            continue; // Skip low-confidence frame; curve interpolation smoothly bridges the gap
+                        }
+                    }
 
-                    // 1. Apply Body Joint Rotations
+                    float time = GetFrameTime(motionData, t, dt, effectiveSpeed);
+
+                    // 1. Apply Body Joint Rotations with Quaternion Hemisphere Continuity
                     foreach (var kvp in boneMap)
                     {
                         SmplxJoint joint = kvp.Key;
                         Transform bone = kvp.Value;
                         Quaternion smplRot = motionData.LocalRotations[t, (int)joint];
                         Quaternion rest = initialRotations[joint];
-                        bone.localRotation = ConvertSmplRotationToUnity(smplRot, joint, rest);
+                        Quaternion targetRot = ConvertSmplRotationToUnity(smplRot, joint, rest);
+
+                        if (prevBoneRotations.TryGetValue(joint, out Quaternion prevRot))
+                        {
+                            if (Quaternion.Dot(prevRot, targetRot) < 0f)
+                            {
+                                targetRot = new Quaternion(-targetRot.x, -targetRot.y, -targetRot.z, -targetRot.w);
+                            }
+                        }
+                        prevBoneRotations[joint] = targetRot;
+                        bone.localRotation = targetRot;
                     }
 
-                    // 2. Apply Finger Poses
+                    // 2. Apply Finger Poses (always relative to CACHED initial rest rotations, preventing accumulation)
                     if (options.HandPose != HandPoseType.KeepFree)
                     {
-                        ApplyFingerPoseToClone(cloneAnim, HandPosePresets.LeftFingerBones, options.HandPose, true);
-                        ApplyFingerPoseToClone(cloneAnim, HandPosePresets.RightFingerBones, options.HandPose, false);
+                        ApplyFingerPoseToClone(fingerBoneMap, initialFingerRotations, HandPosePresets.LeftFingerBones, options.HandPose, true);
+                        ApplyFingerPoseToClone(fingerBoneMap, initialFingerRotations, HandPosePresets.RightFingerBones, options.HandPose, false);
+                    }
+                    else
+                    {
+                        ResetFingerPoses(fingerBoneMap, initialFingerRotations);
                     }
 
                     // 3. Apply Root Position
-                    if (hips != null && motionData.RootPositions.Length > 0)
+                    if (hips != null && motionData.RootPositions != null && motionData.RootPositions.Length > t)
                     {
                         Vector3 rawPos = motionData.RootPositions[t];
                         Vector3 delta = rawPos - firstFramePos;
@@ -177,15 +240,27 @@ namespace TexMotion.Editor.Motion
                     // 4. Sample HumanPose
                     poseHandler.GetHumanPose(ref humanPose);
 
+                    // Ensure root rotation quaternion hemisphere continuity
+                    Quaternion bodyRot = humanPose.bodyRotation;
+                    if (hasPrevBodyRot)
+                    {
+                        if (Quaternion.Dot(prevBodyRot, bodyRot) < 0f)
+                        {
+                            bodyRot = new Quaternion(-bodyRot.x, -bodyRot.y, -bodyRot.z, -bodyRot.w);
+                        }
+                    }
+                    prevBodyRot = bodyRot;
+                    hasPrevBodyRot = true;
+
                     // Record Root Motion curves
                     rootPosX.AddKey(time, humanPose.bodyPosition.x);
                     rootPosY.AddKey(time, humanPose.bodyPosition.y);
                     rootPosZ.AddKey(time, humanPose.bodyPosition.z);
 
-                    rootRotX.AddKey(time, humanPose.bodyRotation.x);
-                    rootRotY.AddKey(time, humanPose.bodyRotation.y);
-                    rootRotZ.AddKey(time, humanPose.bodyRotation.z);
-                    rootRotW.AddKey(time, humanPose.bodyRotation.w);
+                    rootRotX.AddKey(time, bodyRot.x);
+                    rootRotY.AddKey(time, bodyRot.y);
+                    rootRotZ.AddKey(time, bodyRot.z);
+                    rootRotW.AddKey(time, bodyRot.w);
 
                     // Record 95 Muscle Curves
                     for (int m = 0; m < muscleCount; m++)
@@ -212,25 +287,74 @@ namespace TexMotion.Editor.Motion
             }
             finally
             {
-                UnityEngine.Object.DestroyImmediate(tempClone);
+                // Ensure proper disposal of HumanPoseHandler native memory
+                poseHandler?.Dispose();
+
+                if (tempClone != null)
+                {
+                    UnityEngine.Object.DestroyImmediate(tempClone);
+                }
             }
 #endif
         }
 
-        private static void ApplyFingerPoseToClone(Animator animator, HumanBodyBones[] fingerBones, HandPoseType pose, bool isLeft)
+        private static void CacheFingerBones(
+            Animator animator,
+            HumanBodyBones[] fingerBones,
+            Dictionary<HumanBodyBones, Transform> boneMap,
+            Dictionary<HumanBodyBones, Quaternion> initialRotations)
         {
             foreach (var boneType in fingerBones)
             {
+                if (boneMap.ContainsKey(boneType)) continue;
                 Transform bone = animator.GetBoneTransform(boneType);
-                if (bone == null) continue;
-
-                Quaternion rest = bone.localRotation;
-                Quaternion offset = HandPosePresets.GetFingerLocalRotation(pose, boneType, isLeft);
-                bone.localRotation = rest * offset;
+                if (bone != null)
+                {
+                    boneMap[boneType] = bone;
+                    initialRotations[boneType] = bone.localRotation;
+                }
             }
         }
 
-        private static void BuildFaceCurves(AnimationClip clip, AnimationBuildOptions options, float dt, int frames)
+        private static void ApplyFingerPoseToClone(
+            Dictionary<HumanBodyBones, Transform> boneMap,
+            Dictionary<HumanBodyBones, Quaternion> initialRotations,
+            HumanBodyBones[] fingerBones,
+            HandPoseType pose,
+            bool isLeft)
+        {
+            foreach (var boneType in fingerBones)
+            {
+                if (boneMap.TryGetValue(boneType, out Transform bone) && bone != null)
+                {
+                    if (initialRotations.TryGetValue(boneType, out Quaternion rest))
+                    {
+                        Quaternion offset = HandPosePresets.GetFingerLocalRotation(pose, boneType, isLeft);
+                        bone.localRotation = rest * offset;
+                    }
+                }
+            }
+        }
+
+        private static void ResetFingerPoses(
+            Dictionary<HumanBodyBones, Transform> boneMap,
+            Dictionary<HumanBodyBones, Quaternion> initialRotations)
+        {
+            foreach (var kvp in boneMap)
+            {
+                if (kvp.Value != null && initialRotations.TryGetValue(kvp.Key, out Quaternion rest))
+                {
+                    kvp.Value.localRotation = rest;
+                }
+            }
+        }
+
+        private static void BuildFaceCurves(
+            AnimationClip clip,
+            GeneratedMotionData motionData,
+            AnimationBuildOptions options,
+            float dt,
+            int frames)
         {
 #if UNITY_EDITOR
             if (options.FaceEmotion == FaceEmotionType.None) return;
@@ -241,7 +365,8 @@ namespace TexMotion.Editor.Motion
             string facePath = AnimationUtility.CalculateTransformPath(faceRenderer.transform, options.TargetAvatar.transform);
             var weights = FaceEmotionHelper.GetBlendShapeWeightsForEmotion(faceRenderer, options.FaceEmotion, options.EmotionIntensity);
 
-            float totalDuration = (frames - 1) * dt;
+            float effectiveSpeed = options.Speed > 0f ? options.Speed : 1.0f;
+            float totalDuration = GetFrameTime(motionData, frames - 1, dt, effectiveSpeed);
 
             foreach (var kvp in weights)
             {
@@ -259,9 +384,17 @@ namespace TexMotion.Editor.Motion
 #endif
         }
 
-        private static void BuildGenericCurves(AnimationClip clip, GeneratedMotionData motionData, AnimationBuildOptions options, float dt, int frames)
+        private static void BuildGenericCurves(
+            AnimationClip clip,
+            GeneratedMotionData motionData,
+            AnimationBuildOptions options,
+            float dt,
+            int frames)
         {
 #if UNITY_EDITOR
+            float effectiveSpeed = options.Speed > 0f ? options.Speed : 1.0f;
+            VideoMotionData videoData = motionData as VideoMotionData;
+
             for (int j = 0; j < SmplxJointDefinitions.JointCount; j++)
             {
                 string jointName = SmplxJointDefinitions.JointNames[j];
@@ -272,10 +405,32 @@ namespace TexMotion.Editor.Motion
                 var rotZCurve = new AnimationCurve();
                 var rotWCurve = new AnimationCurve();
 
+                Quaternion prevQ = Quaternion.identity;
+                bool hasPrevQ = false;
+
                 for (int t = 0; t < frames; t++)
                 {
-                    float time = t * dt;
+                    if (videoData != null && options.MinConfidenceThreshold > 0f)
+                    {
+                        if (t > 0 && t < frames - 1 && videoData.GetFrameConfidence(t) < options.MinConfidenceThreshold)
+                        {
+                            continue;
+                        }
+                    }
+
+                    float time = GetFrameTime(motionData, t, dt, effectiveSpeed);
                     Quaternion q = motionData.LocalRotations[t, j];
+
+                    if (hasPrevQ)
+                    {
+                        if (Quaternion.Dot(prevQ, q) < 0f)
+                        {
+                            q = new Quaternion(-q.x, -q.y, -q.z, -q.w);
+                        }
+                    }
+                    prevQ = q;
+                    hasPrevQ = true;
+
                     rotXCurve.AddKey(time, q.x);
                     rotYCurve.AddKey(time, q.y);
                     rotZCurve.AddKey(time, q.z);
@@ -288,6 +443,41 @@ namespace TexMotion.Editor.Motion
                 clip.SetCurve(path, typeof(Transform), "m_LocalRotation.w", rotWCurve);
             }
 #endif
+        }
+
+        private static float GetFrameTime(GeneratedMotionData motionData, int frameIndex, float defaultDt, float speed)
+        {
+            float time = motionData.GetTimestamp(frameIndex);
+            if (speed > 0f && Math.Abs(speed - 1.0f) > 0.0001f)
+            {
+                time /= speed;
+            }
+            return time;
+        }
+
+        /// <summary>
+        /// Enforces quaternion hemisphere continuity (dot(q[t], q[t-1]) >= 0) across all joints and frames.
+        /// </summary>
+        public static void EnforceHemisphereContinuity(Quaternion[,] rotations, int frames, int jointCount)
+        {
+            if (rotations == null || frames <= 1 || jointCount <= 0) return;
+
+            for (int j = 0; j < jointCount; j++)
+            {
+                for (int t = 1; t < frames; t++)
+                {
+                    Quaternion prev = rotations[t - 1, j];
+                    Quaternion curr = rotations[t, j];
+
+                    if (prev.x == 0 && prev.y == 0 && prev.z == 0 && prev.w == 0) continue;
+                    if (curr.x == 0 && curr.y == 0 && curr.z == 0 && curr.w == 0) continue;
+
+                    if (Quaternion.Dot(prev, curr) < 0f)
+                    {
+                        rotations[t, j] = new Quaternion(-curr.x, -curr.y, -curr.z, -curr.w);
+                    }
+                }
+            }
         }
 
         private static Quaternion ConvertSmplRotationToUnity(Quaternion smplRot, SmplxJoint joint, Quaternion restPoseRot)

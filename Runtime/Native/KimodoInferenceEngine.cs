@@ -25,6 +25,39 @@ namespace TexMotion.Runtime.Native
             LocalRotations = localRotations;
             FrameRate = frameRate;
         }
+
+        /// <summary>
+        /// Gets timestamp in seconds for a given frame index.
+        /// </summary>
+        public virtual float GetTimestamp(int frameIndex)
+        {
+            return FrameRate > 0f ? frameIndex / FrameRate : 0f;
+        }
+
+        /// <summary>
+        /// Enforces quaternion hemisphere continuity (dot(q[t], q[t-1]) >= 0) across consecutive frames for all joints.
+        /// </summary>
+        public void EnforceQuaternionContinuity()
+        {
+            if (LocalRotations == null || Frames <= 1 || JointCount <= 0) return;
+
+            for (int j = 0; j < JointCount; j++)
+            {
+                for (int t = 1; t < Frames; t++)
+                {
+                    Quaternion prev = LocalRotations[t - 1, j];
+                    Quaternion curr = LocalRotations[t, j];
+
+                    if (prev.x == 0 && prev.y == 0 && prev.z == 0 && prev.w == 0) continue;
+                    if (curr.x == 0 && curr.y == 0 && curr.z == 0 && curr.w == 0) continue;
+
+                    if (Quaternion.Dot(prev, curr) < 0f)
+                    {
+                        LocalRotations[t, j] = new Quaternion(-curr.x, -curr.y, -curr.z, -curr.w);
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -176,7 +209,9 @@ namespace TexMotion.Runtime.Native
                         }
                     }
 
-                    return new GeneratedMotionData(totalFrames, totalJoints, rootPositions, localRotations);
+                    var motionData = new GeneratedMotionData(totalFrames, totalJoints, rootPositions, localRotations);
+                    motionData.EnforceQuaternionContinuity();
+                    return motionData;
                 }
                 finally
                 {
