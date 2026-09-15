@@ -278,6 +278,17 @@ class MediaPipePoseTracker:
         """
         rgb_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
 
+        def _get_conf(lm):
+            v = getattr(lm, 'visibility', None)
+            p = getattr(lm, 'presence', None)
+            if v is not None and p is not None:
+                return float(max(v, p))
+            elif v is not None:
+                return float(v)
+            elif p is not None:
+                return float(p)
+            return 1.0
+
         if self.mode == 'tasks' and self.landmarker is not None:
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
             results = self.landmarker.detect_for_video(mp_image, int(timestamp_ms))
@@ -287,7 +298,7 @@ class MediaPipePoseTracker:
                 vis_sum = 0.0
                 for idx, lm in enumerate(lms_world):
                     world_landmarks[idx] = [lm.x, lm.y, lm.z]
-                    vis_sum += getattr(lm, 'visibility', 1.0)
+                    vis_sum += _get_conf(lm)
                 conf = vis_sum / 33.0
 
                 norm_landmarks = None
@@ -295,7 +306,7 @@ class MediaPipePoseTracker:
                     lms_norm = results.pose_landmarks[0]
                     norm_landmarks = np.zeros((33, 3), dtype=np.float64)
                     for idx, lm in enumerate(lms_norm):
-                        norm_landmarks[idx] = [lm.x, lm.y, getattr(lm, 'visibility', 1.0)]
+                        norm_landmarks[idx] = [lm.x, lm.y, _get_conf(lm)]
 
                 return world_landmarks, norm_landmarks, conf
             return None, None, 0.0
@@ -307,14 +318,14 @@ class MediaPipePoseTracker:
                 vis_sum = 0.0
                 for idx, lm in enumerate(results.pose_world_landmarks.landmark):
                     world_landmarks[idx] = [lm.x, lm.y, lm.z]
-                    vis_sum += getattr(lm, 'visibility', 1.0)
+                    vis_sum += _get_conf(lm)
                 conf = vis_sum / 33.0
 
                 norm_landmarks = None
                 if results.pose_landmarks:
                     norm_landmarks = np.zeros((33, 3), dtype=np.float64)
                     for idx, lm in enumerate(results.pose_landmarks.landmark):
-                        norm_landmarks[idx] = [lm.x, lm.y, getattr(lm, 'visibility', 1.0)]
+                        norm_landmarks[idx] = [lm.x, lm.y, _get_conf(lm)]
 
                 return world_landmarks, norm_landmarks, conf
             return None, None, 0.0
@@ -1422,12 +1433,14 @@ def inpaint_and_constrain_leg_kinematics(
         if norm is not None and len(norm) > MP_LEFT_FOOT_INDEX:
             vis_l = float(norm[MP_LEFT_KNEE, 2] + norm[MP_LEFT_ANKLE, 2] + norm[MP_LEFT_FOOT_INDEX, 2]) / 3.0
 
-        is_downward_l = (p_kn_l[1] < p_hip_l[1] - 0.08) and (p_ank_l[1] < p_kn_l[1] - 0.08)
-        is_valid_len_l = (0.25 <= thigh_l <= 0.60) and (0.25 <= shin_l <= 0.60)
+        is_downward_l = (p_kn_l[1] < p_hip_l[1] - 0.06) and (p_ank_l[1] < p_kn_l[1] - 0.06)
+        is_valid_len_l = (0.22 <= thigh_l <= 0.65) and (0.22 <= shin_l <= 0.65)
         dist_from_pelvis_l = float(np.linalg.norm(p_ank_l - out[t, 0]))
-        is_reasonable_reach_l = (dist_from_pelvis_l <= 1.15)
+        is_reasonable_reach_l = (dist_from_pelvis_l <= 1.25)
+        geom_valid_l = is_downward_l and is_valid_len_l and is_reasonable_reach_l
 
-        if vis_l < 0.30 or not is_downward_l or not is_valid_len_l or not is_reasonable_reach_l:
+        # If geometric sanity holds, accept the detection. Only invalidate if both geometry and confidence fail.
+        if not geom_valid_l or vis_l < 0.08:
             valid_l[t] = False
 
         # --- Right Leg Inspection ---
@@ -1441,12 +1454,13 @@ def inpaint_and_constrain_leg_kinematics(
         if norm is not None and len(norm) > MP_RIGHT_FOOT_INDEX:
             vis_r = float(norm[MP_RIGHT_KNEE, 2] + norm[MP_RIGHT_ANKLE, 2] + norm[MP_RIGHT_FOOT_INDEX, 2]) / 3.0
 
-        is_downward_r = (p_kn_r[1] < p_hip_r[1] - 0.08) and (p_ank_r[1] < p_kn_r[1] - 0.08)
-        is_valid_len_r = (0.25 <= thigh_r <= 0.60) and (0.25 <= shin_r <= 0.60)
+        is_downward_r = (p_kn_r[1] < p_hip_r[1] - 0.06) and (p_ank_r[1] < p_kn_r[1] - 0.06)
+        is_valid_len_r = (0.22 <= thigh_r <= 0.65) and (0.22 <= shin_r <= 0.65)
         dist_from_pelvis_r = float(np.linalg.norm(p_ank_r - out[t, 0]))
-        is_reasonable_reach_r = (dist_from_pelvis_r <= 1.15)
+        is_reasonable_reach_r = (dist_from_pelvis_r <= 1.25)
+        geom_valid_r = is_downward_r and is_valid_len_r and is_reasonable_reach_r
 
-        if vis_r < 0.30 or not is_downward_r or not is_valid_len_r or not is_reasonable_reach_r:
+        if not geom_valid_r or vis_r < 0.08:
             valid_r[t] = False
 
     # Reference lengths computed from valid frames or standard default
