@@ -205,13 +205,16 @@ class MediaPipePoseTracker:
         self.landmarker = None
         self.solution_tracker = None
 
+        eff_det_conf = min(0.38, float(min_detection_confidence))
+        eff_trk_conf = min(0.38, float(min_tracking_confidence))
+
         if self.mode == 'tasks':
             model_path = self._ensure_model(model_complexity)
             options = PoseLandmarkerOptions(
                 base_options=BaseOptions(model_asset_path=model_path),
                 running_mode=RunningMode.VIDEO,
-                min_pose_detection_confidence=min_detection_confidence,
-                min_tracking_confidence=min_tracking_confidence
+                min_pose_detection_confidence=eff_det_conf,
+                min_tracking_confidence=eff_trk_conf
             )
             self.landmarker = PoseLandmarker.create_from_options(options)
             sys.stderr.write(f"[TexMotion] MediaPipe Tasks API initialized with {os.path.basename(model_path)}\n")
@@ -221,8 +224,8 @@ class MediaPipePoseTracker:
                 static_image_mode=False,
                 model_complexity=model_complexity,
                 smooth_landmarks=True,
-                min_detection_confidence=min_detection_confidence,
-                min_tracking_confidence=min_tracking_confidence
+                min_detection_confidence=eff_det_conf,
+                min_tracking_confidence=eff_trk_conf
             )
             sys.stderr.write("[TexMotion] MediaPipe Solutions API initialized\n")
             sys.stderr.flush()
@@ -560,12 +563,12 @@ def draw_pose_overlay(
     # Draw skeleton lines
     for connections, color, thickness in connection_groups:
         for j1, j2 in connections:
-            if vis[j1] > 0.25 and vis[j2] > 0.25:
+            if vis[j1] > 0.15 and vis[j2] > 0.15:
                 cv2.line(out, pts[j1], pts[j2], color, thickness, cv2.LINE_AA)
 
     # Draw joint dots (circles with white glow border)
     for i in range(33):
-        if vis[i] > 0.25:
+        if vis[i] > 0.15:
             pt = pts[i]
             # Outer white glow
             cv2.circle(out, pt, 5, (255, 255, 255), -1, cv2.LINE_AA)
@@ -1374,6 +1377,207 @@ def resolve_arm_occlusion_and_behind_head_pose(
     r_wr_near_pelvis = (abs(r_wr[0] - pelvis[0]) < 0.22 and abs(r_wr[1] - pelvis[1]) < 0.20)
     if r_wr_near_pelvis and vis_r_wr < 0.65 and r_wr[2] >= pelvis[2]:
         out[21, 2] = pelvis[2] - 0.12
+
+    return out
+
+
+def inpaint_and_constrain_leg_kinematics(
+    joints_seq: np.ndarray,
+    norm_landmarks_seq: list = None
+) -> np.ndarray:
+    """
+    Guarantees anatomically valid, stable legs even when MediaPipe completely loses tracking
+    (e.g., crossing legs, self-occlusion, floor blending, or cropped ROI).
+    
+    1. Detects invalid / lost legs per frame using visibility, bone lengths, and spatial sanity.
+    2. Interpolates (inpaints) missing leg poses smoothly from neighboring valid frames.
+    3. If an entire segment or video has missing legs, synthesizes stable anatomical legs from pelvis.
+    4. Strictly enforces constant bone lengths (thigh and shin lengths) to permanently eliminate
+       the bug where legs stretch down infinitely into the timeline area.
+    """
+    T = joints_seq.shape[0]
+    if T == 0:
+        return joints_seq
+
+    out = np.copy(joints_seq)
+
+    valid_l = np.ones(T, dtype=bool)
+    valid_r = np.ones(T, dtype=bool)
+
+    # Standard human anatomical proportions (relative to Pelvis)
+    STD_THIGH_LEN = 0.42
+    STD_SHIN_LEN = 0.42
+
+    for t in range(T):
+        norm = norm_landmarks_seq[t] if (norm_landmarks_seq and t < len(norm_landmarks_seq)) else None
+
+        # --- Left Leg Inspection ---
+        p_hip_l = out[t, 1]
+        p_kn_l = out[t, 4]
+        p_ank_l = out[t, 7]
+        thigh_l = float(np.linalg.norm(p_kn_l - p_hip_l))
+        shin_l = float(np.linalg.norm(p_ank_l - p_kn_l))
+
+        vis_l = 1.0
+        if norm is not None and len(norm) > MP_LEFT_FOOT_INDEX:
+            vis_l = float(norm[MP_LEFT_KNEE, 2] + norm[MP_LEFT_ANKLE, 2] + norm[MP_LEFT_FOOT_INDEX, 2]) / 3.0
+
+        is_downward_l = (p_kn_l[1] < p_hip_l[1] - 0.08) and (p_ank_l[1] < p_kn_l[1] - 0.08)
+        is_valid_len_l = (0.25 <= thigh_l <= 0.60) and (0.25 <= shin_l <= 0.60)
+        dist_from_pelvis_l = float(np.linalg.norm(p_ank_l - out[t, 0]))
+        is_reasonable_reach_l = (dist_from_pelvis_l <= 1.15)
+
+        if vis_l < 0.30 or not is_downward_l or not is_valid_len_l or not is_reasonable_reach_l:
+            valid_l[t] = False
+
+        # --- Right Leg Inspection ---
+        p_hip_r = out[t, 2]
+        p_kn_r = out[t, 5]
+        p_ank_r = out[t, 8]
+        thigh_r = float(np.linalg.norm(p_kn_r - p_hip_r))
+        shin_r = float(np.linalg.norm(p_ank_r - p_kn_r))
+
+        vis_r = 1.0
+        if norm is not None and len(norm) > MP_RIGHT_FOOT_INDEX:
+            vis_r = float(norm[MP_RIGHT_KNEE, 2] + norm[MP_RIGHT_ANKLE, 2] + norm[MP_RIGHT_FOOT_INDEX, 2]) / 3.0
+
+        is_downward_r = (p_kn_r[1] < p_hip_r[1] - 0.08) and (p_ank_r[1] < p_kn_r[1] - 0.08)
+        is_valid_len_r = (0.25 <= thigh_r <= 0.60) and (0.25 <= shin_r <= 0.60)
+        dist_from_pelvis_r = float(np.linalg.norm(p_ank_r - out[t, 0]))
+        is_reasonable_reach_r = (dist_from_pelvis_r <= 1.15)
+
+        if vis_r < 0.30 or not is_downward_r or not is_valid_len_r or not is_reasonable_reach_r:
+            valid_r[t] = False
+
+    # Reference lengths computed from valid frames or standard default
+    val_thighs_l = [np.linalg.norm(out[t, 4] - out[t, 1]) for t in range(T) if valid_l[t]]
+    val_shins_l = [np.linalg.norm(out[t, 7] - out[t, 4]) for t in range(T) if valid_l[t]]
+    ref_thigh_l = float(np.clip(np.median(val_thighs_l), 0.35, 0.48)) if len(val_thighs_l) > 0 else STD_THIGH_LEN
+    ref_shin_l = float(np.clip(np.median(val_shins_l), 0.35, 0.48)) if len(val_shins_l) > 0 else STD_SHIN_LEN
+
+    val_thighs_r = [np.linalg.norm(out[t, 5] - out[t, 2]) for t in range(T) if valid_r[t]]
+    val_shins_r = [np.linalg.norm(out[t, 8] - out[t, 5]) for t in range(T) if valid_r[t]]
+    ref_thigh_r = float(np.clip(np.median(val_thighs_r), 0.35, 0.48)) if len(val_thighs_r) > 0 else STD_THIGH_LEN
+    ref_shin_r = float(np.clip(np.median(val_shins_r), 0.35, 0.48)) if len(val_shins_r) > 0 else STD_SHIN_LEN
+
+    # --- Temporal Inpainting for Left Leg ---
+    valid_indices_l = np.where(valid_l)[0]
+    if len(valid_indices_l) > 0:
+        for t in range(T):
+            if not valid_l[t]:
+                before = valid_indices_l[valid_indices_l < t]
+                after = valid_indices_l[valid_indices_l > t]
+
+                if len(before) > 0 and len(after) > 0:
+                    t0 = before[-1]
+                    t1 = after[0]
+                    alpha = (t - t0) / float(t1 - t0)
+                    v_kn_0 = out[t0, 4] - out[t0, 1]
+                    v_kn_1 = out[t1, 4] - out[t1, 1]
+                    v_kn = (1.0 - alpha) * v_kn_0 + alpha * v_kn_1
+
+                    v_ank_0 = out[t0, 7] - out[t0, 4]
+                    v_ank_1 = out[t1, 7] - out[t1, 4]
+                    v_ank = (1.0 - alpha) * v_ank_0 + alpha * v_ank_1
+
+                    out[t, 4] = out[t, 1] + normalize_vector(v_kn) * ref_thigh_l
+                    out[t, 7] = out[t, 4] + normalize_vector(v_ank) * ref_shin_l
+                elif len(before) > 0:
+                    t0 = before[-1]
+                    v_kn = out[t0, 4] - out[t0, 1]
+                    v_ank = out[t0, 7] - out[t0, 4]
+                    out[t, 4] = out[t, 1] + normalize_vector(v_kn) * ref_thigh_l
+                    out[t, 7] = out[t, 4] + normalize_vector(v_ank) * ref_shin_l
+                else:
+                    t1 = after[0]
+                    v_kn = out[t1, 4] - out[t1, 1]
+                    v_ank = out[t1, 7] - out[t1, 4]
+                    out[t, 4] = out[t, 1] + normalize_vector(v_kn) * ref_thigh_l
+                    out[t, 7] = out[t, 4] + normalize_vector(v_ank) * ref_shin_l
+                out[t, 10] = out[t, 7] + np.array([0.0, -0.05, 0.14])
+    else:
+        # All frames invalid for Left Leg: construct natural crossing/standing leg from hip
+        for t in range(T):
+            out[t, 4] = out[t, 1] + np.array([-0.02, -ref_thigh_l, 0.02])
+            out[t, 7] = out[t, 4] + np.array([0.02, -ref_shin_l, -0.01])
+            out[t, 10] = out[t, 7] + np.array([0.0, -0.05, 0.14])
+
+    # --- Temporal Inpainting for Right Leg ---
+    valid_indices_r = np.where(valid_r)[0]
+    if len(valid_indices_r) > 0:
+        for t in range(T):
+            if not valid_r[t]:
+                before = valid_indices_r[valid_indices_r < t]
+                after = valid_indices_r[valid_indices_r > t]
+
+                if len(before) > 0 and len(after) > 0:
+                    t0 = before[-1]
+                    t1 = after[0]
+                    alpha = (t - t0) / float(t1 - t0)
+                    v_kn_0 = out[t0, 5] - out[t0, 2]
+                    v_kn_1 = out[t1, 5] - out[t1, 2]
+                    v_kn = (1.0 - alpha) * v_kn_0 + alpha * v_kn_1
+
+                    v_ank_0 = out[t0, 8] - out[t0, 5]
+                    v_ank_1 = out[t1, 8] - out[t1, 5]
+                    v_ank = (1.0 - alpha) * v_ank_0 + alpha * v_ank_1
+
+                    out[t, 5] = out[t, 2] + normalize_vector(v_kn) * ref_thigh_r
+                    out[t, 8] = out[t, 5] + normalize_vector(v_ank) * ref_shin_r
+                elif len(before) > 0:
+                    t0 = before[-1]
+                    v_kn = out[t0, 5] - out[t0, 2]
+                    v_ank = out[t0, 8] - out[t0, 5]
+                    out[t, 5] = out[t, 2] + normalize_vector(v_kn) * ref_thigh_r
+                    out[t, 8] = out[t, 5] + normalize_vector(v_ank) * ref_shin_r
+                else:
+                    t1 = after[0]
+                    v_kn = out[t1, 5] - out[t1, 2]
+                    v_ank = out[t1, 8] - out[t1, 5]
+                    out[t, 5] = out[t, 2] + normalize_vector(v_kn) * ref_thigh_r
+                    out[t, 8] = out[t, 5] + normalize_vector(v_ank) * ref_shin_r
+                out[t, 11] = out[t, 8] + np.array([0.0, -0.05, 0.14])
+    else:
+        for t in range(T):
+            out[t, 5] = out[t, 2] + np.array([0.02, -ref_thigh_r, 0.02])
+            out[t, 8] = out[t, 5] + np.array([-0.02, -ref_shin_r, -0.01])
+            out[t, 11] = out[t, 8] + np.array([0.0, -0.05, 0.14])
+
+    # --- Strict Constant Bone Length Enforcement ---
+    for t in range(T):
+        # Left Leg
+        p_hip_l = out[t, 1]
+        dir_thigh_l = normalize_vector(out[t, 4] - p_hip_l)
+        if dir_thigh_l[1] > -0.2:
+            dir_thigh_l = np.array([0.0, -1.0, 0.0])
+        out[t, 4] = p_hip_l + dir_thigh_l * ref_thigh_l
+
+        dir_shin_l = normalize_vector(out[t, 7] - out[t, 4])
+        if dir_shin_l[1] > -0.2:
+            dir_shin_l = np.array([0.0, -1.0, 0.0])
+        out[t, 7] = out[t, 4] + dir_shin_l * ref_shin_l
+
+        v_toe_l = out[t, 10] - out[t, 7]
+        if np.linalg.norm(v_toe_l) < 0.05 or np.linalg.norm(v_toe_l) > 0.25:
+            v_toe_l = np.array([0.0, -0.05, 0.14])
+        out[t, 10] = out[t, 7] + normalize_vector(v_toe_l) * 0.14
+
+        # Right Leg
+        p_hip_r = out[t, 2]
+        dir_thigh_r = normalize_vector(out[t, 5] - p_hip_r)
+        if dir_thigh_r[1] > -0.2:
+            dir_thigh_r = np.array([0.0, -1.0, 0.0])
+        out[t, 5] = p_hip_r + dir_thigh_r * ref_thigh_r
+
+        dir_shin_r = normalize_vector(out[t, 8] - out[t, 5])
+        if dir_shin_r[1] > -0.2:
+            dir_shin_r = np.array([0.0, -1.0, 0.0])
+        out[t, 8] = out[t, 5] + dir_shin_r * ref_shin_r
+
+        v_toe_r = out[t, 11] - out[t, 8]
+        if np.linalg.norm(v_toe_r) < 0.05 or np.linalg.norm(v_toe_r) > 0.25:
+            v_toe_r = np.array([0.0, -0.05, 0.14])
+        out[t, 11] = out[t, 8] + normalize_vector(v_toe_r) * 0.14
 
     return out
 
@@ -2255,6 +2459,9 @@ def process_video(
     for t in range(total_frames):
         joints_seq[t] = convert_mediapipe_landmarks_to_smplx_3d(landmarks_seq[t], norm_landmarks_seq[t])
 
+    # Heals crossing legs, inpaints occluded frames, and eliminates leg stretching
+    joints_seq = inpaint_and_constrain_leg_kinematics(joints_seq, norm_landmarks_seq)
+
     # Stage 2: Foot Contact Locking (0.60 to 0.75)
     emit_progress(0.62, "foot_locking", 0, total_frames)
     if foot_lock:
@@ -2268,7 +2475,7 @@ def process_video(
 
     # Reconstruct true vertical pelvis height from ground contact / foot & hand relative positions
     # (MediaPipe world landmarks are centered at the hips where pelvis is (0,0,0))
-    nominal_leg_length = 0.90
+    nominal_leg_length = 0.88
     if total_frames > 0:
         leg_lengths = []
         for t in range(total_frames):
@@ -2278,7 +2485,7 @@ def process_video(
                 leg_lengths.append(-fd)
         if leg_lengths:
             nominal_leg_length = float(np.percentile(leg_lengths, 90.0))
-    nominal_leg_length = max(0.50, nominal_leg_length)
+    nominal_leg_length = float(np.clip(nominal_leg_length, 0.70, 0.98))
 
     # Compute raw continuous pelvis Y per frame with smooth hysteresis transition
     pelvis_y_raw = np.zeros(total_frames, dtype=np.float64)
