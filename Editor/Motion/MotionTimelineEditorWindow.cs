@@ -40,6 +40,56 @@ namespace TexMotion.Editor.Motion
         private float _previewDistance = 2.8f;
         private Vector3 _previewPivot = new Vector3(0, 1.0f, 0);
 
+        // Bone Skeleton & Interactive Gizmo Manipulation (Blender-style)
+        private bool _showSkeleton = true;
+        private bool _showGizmos = true;
+        private SmplxJoint? _selectedJoint = null;
+        private SmplxJoint? _hoveredJoint = null;
+
+        private enum GizmoAxis
+        {
+            None,
+            X,      // Red - Pitch
+            Y,      // Green - Yaw
+            Z,      // Blue - Roll
+            Screen  // White - View axis ring
+        }
+        private GizmoAxis _activeGizmoAxis = GizmoAxis.None;
+        private GizmoAxis _hoveredGizmoAxis = GizmoAxis.None;
+        private Vector2 _dragStartMousePos;
+        private Vector3 _dragStartEuler;
+        private Quaternion _dragStartLocalRot;
+
+        // Bone Hierarchy Connections for Skeleton Line Drawing
+        private static readonly (SmplxJoint Parent, SmplxJoint Child)[] BoneConnections = new[]
+        {
+            (SmplxJoint.Pelvis, SmplxJoint.Spine1),
+            (SmplxJoint.Spine1, SmplxJoint.Spine2),
+            (SmplxJoint.Spine2, SmplxJoint.Spine3),
+            (SmplxJoint.Spine3, SmplxJoint.Neck),
+            (SmplxJoint.Neck, SmplxJoint.Head),
+
+            (SmplxJoint.Spine3, SmplxJoint.L_Collar),
+            (SmplxJoint.L_Collar, SmplxJoint.L_Shoulder),
+            (SmplxJoint.L_Shoulder, SmplxJoint.L_Elbow),
+            (SmplxJoint.L_Elbow, SmplxJoint.L_Wrist),
+
+            (SmplxJoint.Spine3, SmplxJoint.R_Collar),
+            (SmplxJoint.R_Collar, SmplxJoint.R_Shoulder),
+            (SmplxJoint.R_Shoulder, SmplxJoint.R_Elbow),
+            (SmplxJoint.R_Elbow, SmplxJoint.R_Wrist),
+
+            (SmplxJoint.Pelvis, SmplxJoint.L_Hip),
+            (SmplxJoint.L_Hip, SmplxJoint.L_Knee),
+            (SmplxJoint.L_Knee, SmplxJoint.L_Ankle),
+            (SmplxJoint.L_Ankle, SmplxJoint.L_Foot),
+
+            (SmplxJoint.Pelvis, SmplxJoint.R_Hip),
+            (SmplxJoint.R_Hip, SmplxJoint.R_Knee),
+            (SmplxJoint.R_Knee, SmplxJoint.R_Ankle),
+            (SmplxJoint.R_Ankle, SmplxJoint.R_Foot)
+        };
+
         // Video synchronization (when editing VideoMotionData)
         private GameObject _videoPlayerGo;
         private VideoPlayer _videoPlayer;
@@ -438,9 +488,17 @@ namespace TexMotion.Editor.Motion
                 SetupPreviewInstance();
             }
 
+            Event evt = Event.current;
+
+            // 1. Process Gizmo & Joint Selection first (Blender-style direct manipulation)
+            bool gizmoHandled = HandleGizmoAndSelectionEvents(rect, evt);
+            if (gizmoHandled)
+            {
+                return;
+            }
+
             // Handle Camera interaction (orbit, zoom, pan)
             int controlID = GUIUtility.GetControlID(FocusType.Passive);
-            Event evt = Event.current;
 
             switch (evt.GetTypeForControl(controlID))
             {
@@ -506,6 +564,10 @@ namespace TexMotion.Editor.Motion
                     _previewUtility.Render(true);
                     Texture resultTex = _previewUtility.EndPreview();
                     GUI.DrawTexture(rect, resultTex, ScaleMode.StretchToFill, false);
+
+                    // Overlay Skeleton and 3D Rotation Gizmos (Blender Pose Mode)
+                    DrawSkeletonOverlay(rect, _previewUtility.camera);
+                    DrawBoneGizmo(rect, _previewUtility.camera);
                 }
                 else
                 {
@@ -518,18 +580,556 @@ namespace TexMotion.Editor.Motion
                     GUI.Label(rect, "⚠️ No Avatar Assigned\nPlease select a Humanoid Avatar in the toolbar above.", missingStyle);
                 }
 
-                // Overlay Camera Reset button in top-right of preview
-                Rect resetCamBtn = new Rect(rect.xMax - 95, rect.y + 8, 88, 22);
-                if (GUI.Button(resetCamBtn, "🔄 Reset Cam", EditorStyles.miniButton))
-                {
-                    _previewDir = new Vector2(180f, 10f);
-                    _previewDistance = 2.8f;
-                    _previewPivot = _previewHipsTransform != null
-                        ? new Vector3(0, _previewHipsTransform.position.y + 0.2f, 0)
-                        : new Vector3(0, 1.0f, 0);
-                }
+                // Overlay Viewport HUD (Toggles, Camera Reset, Bone badge, hint)
+                DrawViewportHUD(rect);
             }
         }
+
+        #region Bone Skeleton & Gizmo Interaction
+
+        private bool TryWorldToScreen(Camera cam, Rect viewportRect, Vector3 worldPos, out Vector2 screenPos)
+        {
+            screenPos = Vector2.zero;
+            if (cam == null) return false;
+
+            Vector3 v = cam.WorldToViewportPoint(worldPos);
+            if (v.z <= 0.01f) return false; // Behind camera
+
+            screenPos = new Vector2(
+                viewportRect.x + v.x * viewportRect.width,
+                viewportRect.y + (1.0f - v.y) * viewportRect.height
+            );
+            return true;
+        }
+
+        private void DrawSkeletonOverlay(Rect rect, Camera cam)
+        {
+            if (!_showSkeleton || _previewInstance == null || cam == null) return;
+
+            Handles.BeginGUI();
+
+            // 1. Draw Bone Connection Lines
+            foreach (var (parentJoint, childJoint) in BoneConnections)
+            {
+                if (_previewBoneMap.TryGetValue(parentJoint, out Transform parent) && parent != null &&
+                    _previewBoneMap.TryGetValue(childJoint, out Transform child) && child != null)
+                {
+                    if (TryWorldToScreen(cam, rect, parent.position, out Vector2 p1) &&
+                        TryWorldToScreen(cam, rect, child.position, out Vector2 p2))
+                    {
+                        bool isHighlighted = (_selectedJoint == parentJoint || _selectedJoint == childJoint);
+                        Color boneColor = isHighlighted
+                            ? new Color(1.0f, 0.85f, 0.25f, 0.95f)
+                            : GetBoneLineColor(parentJoint, childJoint);
+
+                        float width = isHighlighted ? 3.5f : 2.0f;
+                        Handles.color = boneColor;
+                        Handles.DrawAAPolyLine(width, new Vector3(p1.x, p1.y, 0), new Vector3(p2.x, p2.y, 0));
+                    }
+                }
+            }
+
+            // 2. Draw Joint Nodes (Spheres)
+            foreach (var kvp in _previewBoneMap)
+            {
+                SmplxJoint joint = kvp.Key;
+                Transform bone = kvp.Value;
+                if (bone == null) continue;
+
+                if (TryWorldToScreen(cam, rect, bone.position, out Vector2 pt))
+                {
+                    bool isSelected = (_selectedJoint == joint);
+                    bool isHovered = (_hoveredJoint == joint);
+
+                    float radius = isSelected ? 8f : (isHovered ? 7f : 5f);
+                    Color fillCol = GetJointColor(joint, isHovered, isSelected);
+
+                    // Outer dark ring for contrast
+                    Handles.color = isSelected ? Color.white : new Color(0.08f, 0.10f, 0.15f, 0.95f);
+                    Handles.DrawSolidDisc(new Vector3(pt.x, pt.y, 0), Vector3.forward, radius + 1.5f);
+
+                    // Core colored disc
+                    Handles.color = fillCol;
+                    Handles.DrawSolidDisc(new Vector3(pt.x, pt.y, 0), Vector3.forward, radius);
+
+                    if (isSelected)
+                    {
+                        // Glowing accent ring
+                        Handles.color = new Color(1.0f, 0.88f, 0.2f, 0.75f);
+                        Handles.DrawWireDisc(new Vector3(pt.x, pt.y, 0), Vector3.forward, radius + 3.5f);
+                    }
+                }
+            }
+
+            Handles.EndGUI();
+        }
+
+        private void DrawBoneGizmo(Rect rect, Camera cam)
+        {
+            if (!_showGizmos || !_selectedJoint.HasValue || _previewInstance == null || cam == null)
+                return;
+
+            SmplxJoint joint = _selectedJoint.Value;
+            if (!_previewBoneMap.TryGetValue(joint, out Transform bone) || bone == null)
+                return;
+
+            Vector3 center = bone.position;
+            if (!TryWorldToScreen(cam, rect, center, out Vector2 centerScreen))
+                return;
+
+            Handles.BeginGUI();
+
+            float gizmoRadius = 0.16f * _previewDistance;
+            int segments = 32;
+
+            Vector3 right = bone.right;
+            Vector3 up = bone.up;
+            Vector3 forward = bone.forward;
+
+            // X Ring (Pitch / Red)
+            DrawGizmoRing(rect, cam, center, up, forward, gizmoRadius, segments,
+                _activeGizmoAxis == GizmoAxis.X ? Color.yellow : (_hoveredGizmoAxis == GizmoAxis.X ? Color.white : new Color(0.95f, 0.25f, 0.25f, 0.95f)),
+                _activeGizmoAxis == GizmoAxis.X || _hoveredGizmoAxis == GizmoAxis.X ? 4.0f : 2.5f);
+
+            // Y Ring (Yaw / Green)
+            DrawGizmoRing(rect, cam, center, forward, right, gizmoRadius, segments,
+                _activeGizmoAxis == GizmoAxis.Y ? Color.yellow : (_hoveredGizmoAxis == GizmoAxis.Y ? Color.white : new Color(0.30f, 0.90f, 0.35f, 0.95f)),
+                _activeGizmoAxis == GizmoAxis.Y || _hoveredGizmoAxis == GizmoAxis.Y ? 4.0f : 2.5f);
+
+            // Z Ring (Roll / Blue)
+            DrawGizmoRing(rect, cam, center, right, up, gizmoRadius, segments,
+                _activeGizmoAxis == GizmoAxis.Z ? Color.yellow : (_hoveredGizmoAxis == GizmoAxis.Z ? Color.white : new Color(0.25f, 0.60f, 1.00f, 0.95f)),
+                _activeGizmoAxis == GizmoAxis.Z || _hoveredGizmoAxis == GizmoAxis.Z ? 4.0f : 2.5f);
+
+            // Screen View Ring (White)
+            Vector3 camRight = cam.transform.right;
+            Vector3 camUp = cam.transform.up;
+            DrawGizmoRing(rect, cam, center, camRight, camUp, gizmoRadius * 1.18f, segments,
+                _activeGizmoAxis == GizmoAxis.Screen ? Color.yellow : (_hoveredGizmoAxis == GizmoAxis.Screen ? Color.white : new Color(0.85f, 0.88f, 0.95f, 0.5f)),
+                _activeGizmoAxis == GizmoAxis.Screen || _hoveredGizmoAxis == GizmoAxis.Screen ? 3.0f : 1.5f);
+
+            Handles.EndGUI();
+        }
+
+        private void DrawGizmoRing(Rect rect, Camera cam, Vector3 center, Vector3 u, Vector3 v, float radius, int segments, Color color, float width)
+        {
+            var points = new List<Vector3>();
+            for (int i = 0; i <= segments; i++)
+            {
+                float angle = (i / (float)segments) * Mathf.PI * 2f;
+                Vector3 worldPt = center + (Mathf.Cos(angle) * u + Mathf.Sin(angle) * v) * radius;
+                if (TryWorldToScreen(cam, rect, worldPt, out Vector2 screenPt))
+                {
+                    points.Add(new Vector3(screenPt.x, screenPt.y, 0));
+                }
+            }
+
+            if (points.Count > 1)
+            {
+                Handles.color = color;
+                Handles.DrawAAPolyLine(width, points.ToArray());
+            }
+        }
+
+        private bool HandleGizmoAndSelectionEvents(Rect rect, Event evt)
+        {
+            if (_previewUtility == null || _previewInstance == null) return false;
+            Camera cam = _previewUtility.camera;
+            if (cam == null) return false;
+
+            Vector2 mousePos = evt.mousePosition;
+            bool containsMouse = rect.Contains(mousePos);
+
+            // 1. Mouse Move: Hover Detection
+            if (evt.type == EventType.MouseMove && containsMouse)
+            {
+                SmplxJoint? prevHoverJoint = _hoveredJoint;
+                GizmoAxis prevHoverAxis = _hoveredGizmoAxis;
+
+                _hoveredGizmoAxis = HitTestGizmoAxis(rect, cam, mousePos);
+                if (_hoveredGizmoAxis == GizmoAxis.None)
+                {
+                    _hoveredJoint = HitTestJoint(rect, cam, mousePos);
+                }
+                else
+                {
+                    _hoveredJoint = null;
+                }
+
+                if (prevHoverJoint != _hoveredJoint || prevHoverAxis != _hoveredGizmoAxis)
+                {
+                    Repaint();
+                }
+            }
+
+            // 2. Mouse Down: Click Selection or Start Gizmo Drag
+            if (evt.type == EventType.MouseDown && evt.button == 0 && containsMouse)
+            {
+                // Test Gizmo Axis first if a joint is already selected
+                if (_selectedJoint.HasValue && _showGizmos)
+                {
+                    GizmoAxis hitAxis = HitTestGizmoAxis(rect, cam, mousePos);
+                    if (hitAxis != GizmoAxis.None)
+                    {
+                        _activeGizmoAxis = hitAxis;
+                        _dragStartMousePos = mousePos;
+                        _dragStartEuler = _data.GetJointEuler(_currentFrame, _selectedJoint.Value);
+                        _dragStartLocalRot = _previewBoneMap[_selectedJoint.Value].localRotation;
+                        _data.RecordUndo($"Rotate {_selectedJoint.Value} Frame {_currentFrame}");
+                        evt.Use();
+                        return true;
+                    }
+                }
+
+                // Test Joint Node click
+                if (_showSkeleton)
+                {
+                    SmplxJoint? hitJoint = HitTestJoint(rect, cam, mousePos);
+                    if (hitJoint.HasValue)
+                    {
+                        _selectedJoint = hitJoint.Value;
+                        FocusJointInInspector(hitJoint.Value);
+                        _activeGizmoAxis = GizmoAxis.None;
+                        evt.Use();
+                        Repaint();
+                        return true;
+                    }
+                }
+
+                // Clicked on empty space with Gizmo active: check distance to clear selection
+                if (_selectedJoint.HasValue)
+                {
+                    if (_previewBoneMap.TryGetValue(_selectedJoint.Value, out Transform curBone) && curBone != null)
+                    {
+                        if (TryWorldToScreen(cam, rect, curBone.position, out Vector2 curCenter))
+                        {
+                            if (Vector2.Distance(mousePos, curCenter) > 80f && !evt.shift)
+                            {
+                                _selectedJoint = null;
+                                Repaint();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Mouse Drag: Rotate Bone via Gizmo
+            if (evt.type == EventType.MouseDrag && _activeGizmoAxis != GizmoAxis.None && _selectedJoint.HasValue)
+            {
+                SmplxJoint joint = _selectedJoint.Value;
+                if (_previewBoneMap.TryGetValue(joint, out Transform bone) && bone != null)
+                {
+                    Vector2 delta = mousePos - _dragStartMousePos;
+
+                    if (_activeGizmoAxis == GizmoAxis.Screen)
+                    {
+                        if (TryWorldToScreen(cam, rect, bone.position, out Vector2 center))
+                        {
+                            float a1 = Mathf.Atan2(_dragStartMousePos.y - center.y, _dragStartMousePos.x - center.x) * Mathf.Rad2Deg;
+                            float a2 = Mathf.Atan2(mousePos.y - center.y, mousePos.x - center.x) * Mathf.Rad2Deg;
+                            float deltaAngle = Mathf.DeltaAngle(a1, a2);
+
+                            Vector3 newEuler = _dragStartEuler;
+                            newEuler.z += deltaAngle;
+                            _data.SetJointEuler(_currentFrame, joint, newEuler);
+                            ApplyCurrentFrameToPreview();
+                        }
+                    }
+                    else
+                    {
+                        Vector3 newEuler = _dragStartEuler;
+                        float sensitivity = 0.65f;
+
+                        if (_activeGizmoAxis == GizmoAxis.X)
+                        {
+                            newEuler.x += -delta.y * sensitivity;
+                        }
+                        else if (_activeGizmoAxis == GizmoAxis.Y)
+                        {
+                            newEuler.y += delta.x * sensitivity;
+                        }
+                        else if (_activeGizmoAxis == GizmoAxis.Z)
+                        {
+                            newEuler.z += (delta.x - delta.y) * 0.5f * sensitivity;
+                        }
+
+                        _data.SetJointEuler(_currentFrame, joint, newEuler);
+                        ApplyCurrentFrameToPreview();
+                    }
+
+                    evt.Use();
+                    Repaint();
+                    return true;
+                }
+            }
+
+            // 4. Mouse Up: Release Gizmo Drag
+            if (evt.type == EventType.MouseUp && _activeGizmoAxis != GizmoAxis.None)
+            {
+                _activeGizmoAxis = GizmoAxis.None;
+                evt.Use();
+                Repaint();
+                return true;
+            }
+
+            return false;
+        }
+
+        private SmplxJoint? HitTestJoint(Rect rect, Camera cam, Vector2 mousePos)
+        {
+            SmplxJoint? nearestJoint = null;
+            float nearestDist = 14f; // 14px threshold
+
+            foreach (var kvp in _previewBoneMap)
+            {
+                Transform bone = kvp.Value;
+                if (bone == null) continue;
+
+                if (TryWorldToScreen(cam, rect, bone.position, out Vector2 screenPt))
+                {
+                    float d = Vector2.Distance(mousePos, screenPt);
+                    if (d < nearestDist)
+                    {
+                        nearestDist = d;
+                        nearestJoint = kvp.Key;
+                    }
+                }
+            }
+
+            return nearestJoint;
+        }
+
+        private GizmoAxis HitTestGizmoAxis(Rect rect, Camera cam, Vector2 mousePos)
+        {
+            if (!_selectedJoint.HasValue || !_showGizmos) return GizmoAxis.None;
+            if (!_previewBoneMap.TryGetValue(_selectedJoint.Value, out Transform bone) || bone == null) return GizmoAxis.None;
+
+            Vector3 center = bone.position;
+            if (!TryWorldToScreen(cam, rect, center, out Vector2 centerScreen)) return GizmoAxis.None;
+
+            float gizmoRadius = 0.16f * _previewDistance;
+            int segments = 24;
+            float threshold = 9f; // 9px hit threshold
+
+            // 1. Screen View Ring
+            Vector3 camRight = cam.transform.right;
+            Vector3 camUp = cam.transform.up;
+            if (DistanceToRing(rect, cam, center, camRight, camUp, gizmoRadius * 1.18f, segments, mousePos) < threshold)
+            {
+                return GizmoAxis.Screen;
+            }
+
+            // 2. X Ring (Pitch / Red)
+            if (DistanceToRing(rect, cam, center, bone.up, bone.forward, gizmoRadius, segments, mousePos) < threshold)
+            {
+                return GizmoAxis.X;
+            }
+
+            // 3. Y Ring (Yaw / Green)
+            if (DistanceToRing(rect, cam, center, bone.forward, bone.right, gizmoRadius, segments, mousePos) < threshold)
+            {
+                return GizmoAxis.Y;
+            }
+
+            // 4. Z Ring (Roll / Blue)
+            if (DistanceToRing(rect, cam, center, bone.right, bone.up, gizmoRadius, segments, mousePos) < threshold)
+            {
+                return GizmoAxis.Z;
+            }
+
+            return GizmoAxis.None;
+        }
+
+        private float DistanceToRing(Rect rect, Camera cam, Vector3 center, Vector3 u, Vector3 v, float radius, int segments, Vector2 mousePos)
+        {
+            float minDist = float.MaxValue;
+            Vector2 prevPt = Vector2.zero;
+            bool hasPrev = false;
+
+            for (int i = 0; i <= segments; i++)
+            {
+                float angle = (i / (float)segments) * Mathf.PI * 2f;
+                Vector3 worldPt = center + (Mathf.Cos(angle) * u + Mathf.Sin(angle) * v) * radius;
+                if (TryWorldToScreen(cam, rect, worldPt, out Vector2 currPt))
+                {
+                    if (hasPrev)
+                    {
+                        float d = DistanceToLineSegment(mousePos, prevPt, currPt);
+                        if (d < minDist) minDist = d;
+                    }
+                    prevPt = currPt;
+                    hasPrev = true;
+                }
+                else
+                {
+                    hasPrev = false;
+                }
+            }
+
+            return minDist;
+        }
+
+        private static float DistanceToLineSegment(Vector2 p, Vector2 a, Vector2 b)
+        {
+            Vector2 ab = b - a;
+            float sqrLen = ab.sqrMagnitude;
+            if (sqrLen < 0.0001f) return Vector2.Distance(p, a);
+
+            float t = Mathf.Clamp01(Vector2.Dot(p - a, ab) / sqrLen);
+            Vector2 proj = a + t * ab;
+            return Vector2.Distance(p, proj);
+        }
+
+        private void DrawViewportHUD(Rect rect)
+        {
+            // Top-Left Toolbar: Skeleton & Gizmos Toggles
+            Rect toolBarRect = new Rect(rect.x + 8, rect.y + 8, 160, 24);
+            GUILayout.BeginArea(toolBarRect);
+            EditorGUILayout.BeginHorizontal();
+
+            GUI.backgroundColor = _showSkeleton ? new Color(0.3f, 0.85f, 0.45f) : new Color(0.35f, 0.35f, 0.35f);
+            _showSkeleton = GUILayout.Toggle(_showSkeleton, "🦴 Skeleton", EditorStyles.miniButtonLeft, GUILayout.Width(78), GUILayout.Height(22));
+
+            GUI.backgroundColor = _showGizmos ? new Color(0.3f, 0.7f, 1.0f) : new Color(0.35f, 0.35f, 0.35f);
+            _showGizmos = GUILayout.Toggle(_showGizmos, "🎯 Gizmos", EditorStyles.miniButtonRight, GUILayout.Width(68), GUILayout.Height(22));
+
+            GUI.backgroundColor = Color.white;
+            EditorGUILayout.EndHorizontal();
+            GUILayout.EndArea();
+
+            // Top-Right: Camera Reset & Active Bone Badge
+            float rightWidth = _selectedJoint.HasValue ? 280 : 95;
+            Rect rightBarRect = new Rect(rect.xMax - rightWidth - 8, rect.y + 8, rightWidth, 24);
+            GUILayout.BeginArea(rightBarRect);
+            EditorGUILayout.BeginHorizontal();
+
+            if (_selectedJoint.HasValue)
+            {
+                var badgeStyle = new GUIStyle(EditorStyles.miniBoldLabel)
+                {
+                    normal = { textColor = new Color(1.0f, 0.85f, 0.25f) }
+                };
+                string friendlyName = GetJointFriendlyName(_selectedJoint.Value);
+                EditorGUILayout.LabelField($"🎯 {friendlyName}", badgeStyle, GUILayout.Width(130));
+
+                if (GUILayout.Button("Clear", EditorStyles.miniButton, GUILayout.Width(42), GUILayout.Height(20)))
+                {
+                    _selectedJoint = null;
+                }
+
+                if (GUILayout.Button("Reset", EditorStyles.miniButton, GUILayout.Width(45), GUILayout.Height(20)))
+                {
+                    _data.ResetJointToOriginal(_currentFrame, _selectedJoint.Value);
+                    ApplyCurrentFrameToPreview();
+                }
+            }
+
+            if (GUILayout.Button("🔄 Reset Cam", EditorStyles.miniButton, GUILayout.Width(88), GUILayout.Height(20)))
+            {
+                _previewDir = new Vector2(180f, 10f);
+                _previewDistance = 2.8f;
+                _previewPivot = _previewHipsTransform != null
+                    ? new Vector3(0, _previewHipsTransform.position.y + 0.2f, 0)
+                    : new Vector3(0, 1.0f, 0);
+            }
+
+            EditorGUILayout.EndHorizontal();
+            GUILayout.EndArea();
+
+            // Bottom-Left Hint overlay
+            Rect hintRect = new Rect(rect.x + 8, rect.y + rect.height - 22, 290, 18);
+            EditorGUI.DrawRect(hintRect, new Color(0.06f, 0.08f, 0.12f, 0.75f));
+            var hintStyle = new GUIStyle(EditorStyles.miniLabel)
+            {
+                normal = { textColor = new Color(0.7f, 0.75f, 0.85f) },
+                alignment = TextAnchor.MiddleLeft,
+                padding = new RectOffset(6, 0, 1, 0)
+            };
+            string hint = _selectedJoint.HasValue
+                ? $"Drag Ring to Rotate ({GetJointFriendlyName(_selectedJoint.Value)})"
+                : "Click Bone to Select | Drag: Orbit | Scroll: Zoom";
+            GUI.Label(hintRect, hint, hintStyle);
+        }
+
+        private void FocusJointInInspector(SmplxJoint joint)
+        {
+            string name = joint.ToString();
+            if (name.StartsWith("L_Collar") || name.StartsWith("L_Shoulder") || name.StartsWith("L_Elbow") || name.StartsWith("L_Wrist"))
+            {
+                _foldoutLeftArm = true;
+            }
+            else if (name.StartsWith("R_Collar") || name.StartsWith("R_Shoulder") || name.StartsWith("R_Elbow") || name.StartsWith("R_Wrist"))
+            {
+                _foldoutRightArm = true;
+            }
+            else if (name.StartsWith("L_Hip") || name.StartsWith("L_Knee") || name.StartsWith("L_Ankle") || name.StartsWith("L_Foot"))
+            {
+                _foldoutLeftLeg = true;
+            }
+            else if (name.StartsWith("R_Hip") || name.StartsWith("R_Knee") || name.StartsWith("R_Ankle") || name.StartsWith("R_Foot"))
+            {
+                _foldoutRightLeg = true;
+            }
+            else if (joint == SmplxJoint.Pelvis)
+            {
+                _foldoutRoot = true;
+            }
+            else
+            {
+                _foldoutTorso = true;
+            }
+        }
+
+        public static string GetJointFriendlyName(SmplxJoint joint)
+        {
+            switch (joint)
+            {
+                case SmplxJoint.Pelvis: return "Hips / Root";
+                case SmplxJoint.L_Hip: return "Left Hip";
+                case SmplxJoint.R_Hip: return "Right Hip";
+                case SmplxJoint.Spine1: return "Spine (Lower)";
+                case SmplxJoint.L_Knee: return "Left Knee";
+                case SmplxJoint.R_Knee: return "Right Knee";
+                case SmplxJoint.Spine2: return "Chest (Middle)";
+                case SmplxJoint.L_Ankle: return "Left Ankle";
+                case SmplxJoint.R_Ankle: return "Right Ankle";
+                case SmplxJoint.Spine3: return "Upper Chest";
+                case SmplxJoint.L_Foot: return "Left Toes";
+                case SmplxJoint.R_Foot: return "Right Toes";
+                case SmplxJoint.Neck: return "Neck";
+                case SmplxJoint.L_Collar: return "Left Collar (Shoulder)";
+                case SmplxJoint.R_Collar: return "Right Collar (Shoulder)";
+                case SmplxJoint.Head: return "Head";
+                case SmplxJoint.L_Shoulder: return "Left Upper Arm";
+                case SmplxJoint.R_Shoulder: return "Right Upper Arm";
+                case SmplxJoint.L_Elbow: return "Left Elbow";
+                case SmplxJoint.R_Elbow: return "Right Elbow";
+                case SmplxJoint.L_Wrist: return "Left Wrist (Hand)";
+                case SmplxJoint.R_Wrist: return "Right Wrist (Hand)";
+                default: return joint.ToString();
+            }
+        }
+
+        private static Color GetBoneLineColor(SmplxJoint parent, SmplxJoint child)
+        {
+            string childName = child.ToString();
+            if (childName.StartsWith("L_")) return new Color(0.2f, 0.9f, 0.55f, 0.75f); // Left: Emerald Green
+            if (childName.StartsWith("R_")) return new Color(0.95f, 0.35f, 0.45f, 0.75f); // Right: Coral Red
+            return new Color(0.55f, 0.75f, 1.0f, 0.75f); // Spine / Torso: Soft Sky Blue
+        }
+
+        private static Color GetJointColor(SmplxJoint joint, bool isHovered, bool isSelected)
+        {
+            if (isSelected) return new Color(1.0f, 0.85f, 0.20f, 1.0f); // Gold
+            if (isHovered) return new Color(1.0f, 1.0f, 1.0f, 1.0f);     // Pure White
+
+            string name = joint.ToString();
+            if (name.StartsWith("L_")) return new Color(0.2f, 0.9f, 0.55f, 0.9f);
+            if (name.StartsWith("R_")) return new Color(0.95f, 0.35f, 0.45f, 0.9f);
+            return new Color(0.45f, 0.75f, 1.0f, 0.9f);
+        }
+
+        #endregion
 
         private void DrawVideoTexture(Rect rect)
         {
@@ -714,7 +1314,25 @@ namespace TexMotion.Editor.Motion
 
         private void DrawRootPositionInspector()
         {
+            bool isSelected = (_selectedJoint == SmplxJoint.Pelvis);
+            if (isSelected)
+            {
+                GUI.backgroundColor = new Color(1.0f, 0.9f, 0.4f, 0.35f);
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                GUI.backgroundColor = Color.white;
+            }
+
+            EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField("Root Position (Offset):", EditorStyles.miniBoldLabel);
+            GUI.backgroundColor = isSelected ? new Color(1.0f, 0.85f, 0.2f) : Color.white;
+            if (GUILayout.Button(isSelected ? "🎯 Active" : "🎯 Select", EditorStyles.miniButton, GUILayout.Width(isSelected ? 65 : 60)))
+            {
+                _selectedJoint = isSelected ? (SmplxJoint?)null : SmplxJoint.Pelvis;
+                Repaint();
+            }
+            GUI.backgroundColor = Color.white;
+            EditorGUILayout.EndHorizontal();
+
             Vector3 rootPos = _data.GetRootPosition(_currentFrame);
 
             EditorGUI.BeginChangeCheck();
@@ -728,18 +1346,44 @@ namespace TexMotion.Editor.Motion
                 _data.SetRootPosition(_currentFrame, new Vector3(x, y, z));
                 ApplyCurrentFrameToPreview();
             }
+
+            if (isSelected)
+            {
+                EditorGUILayout.EndVertical();
+            }
         }
 
         private void DrawJointRotationSlider(SmplxJoint joint, string label)
         {
+            bool isSelected = (_selectedJoint == joint);
             Vector3 euler = _data.GetJointEuler(_currentFrame, joint);
 
+            if (isSelected)
+            {
+                GUI.backgroundColor = new Color(1.0f, 0.9f, 0.4f, 0.35f);
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                GUI.backgroundColor = Color.white;
+            }
+
             EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(label, EditorStyles.miniBoldLabel);
+
+            // Bone select toggle button
+            GUI.backgroundColor = isSelected ? new Color(1.0f, 0.85f, 0.2f) : Color.white;
+            if (GUILayout.Button(isSelected ? "🎯 Active" : "🎯", EditorStyles.miniButton, GUILayout.Width(isSelected ? 62 : 28)))
+            {
+                _selectedJoint = isSelected ? (SmplxJoint?)null : joint;
+                Repaint();
+            }
+            GUI.backgroundColor = Color.white;
+
+            var titleStyle = isSelected ? EditorStyles.boldLabel : EditorStyles.miniBoldLabel;
+            EditorGUILayout.LabelField(label, titleStyle);
+
             if (GUILayout.Button("Reset", EditorStyles.miniButton, GUILayout.Width(45)))
             {
                 _data.ResetJointToOriginal(_currentFrame, joint);
                 ApplyCurrentFrameToPreview();
+                if (isSelected) EditorGUILayout.EndVertical();
                 return;
             }
             EditorGUILayout.EndHorizontal();
@@ -754,6 +1398,11 @@ namespace TexMotion.Editor.Motion
                 _data.RecordUndo($"Rotate {joint} on Frame {_currentFrame}");
                 _data.SetJointEuler(_currentFrame, joint, new Vector3(rx, ry, rz));
                 ApplyCurrentFrameToPreview();
+            }
+
+            if (isSelected)
+            {
+                EditorGUILayout.EndVertical();
             }
 
             EditorGUILayout.Space(2);
