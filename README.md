@@ -9,6 +9,10 @@
 
 **TexMotion** is an AI-powered Text-to-Motion generation extension for Unity and VRChat avatars. By integrating native in-engine inference via [kimodo.cpp](https://github.com/localai-org/kimodo.cpp), TexMotion enables avatar creators to generate fluid, natural Humanoid 3D animations directly from natural language prompts, preview them in real-time within an interactive 3D viewport, and automatically bind them to VRChat avatars—either non-destructively using **Modular Avatar** or directly into **VRChat Expressions Menus & Action Layers**.
 
+<p align="center">
+  <img src="docs/images/timeline_editor.png" alt="TexMotion Motion Timeline Editor" width="100%" />
+</p>
+
 ---
 
 ## 🌟 Key Features
@@ -113,6 +117,10 @@ and [HybrIK](https://github.com/jeffffffli/HybrIK).
 # 日本語
 
 **TexMotion** は、自然言語テキストから高品質な 3D モーションを生成し、Unity および VRChat アバターへ即座に組み込むことができる AI モーション作成拡張機能です。[kimodo.cpp](https://github.com/localai-org/kimodo.cpp) のネイティブ推論エンジンを Unity 内に統合しており、Python 環境の構築不要でローカル高速推論を実現します。
+
+<p align="center">
+  <img src="docs/images/timeline_editor.png" alt="TexMotion タイムラインエディター" width="100%" />
+</p>
 
 ---
 
