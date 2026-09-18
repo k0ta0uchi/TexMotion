@@ -73,7 +73,11 @@ namespace TexMotion.Editor
                         CompletedFiles = i + 1,
                         TotalFiles = totalFiles,
                         CurrentFileName = fileName,
-                        StatusText = $"[Skipped existing] {fileName} ({i + 1}/{totalFiles})"
+                        StatusText = TexMotionLocalization.TrFormat(
+                            TexMotionLocalization.SkippedExistingFile,
+                            fileName,
+                            i + 1,
+                            totalFiles)
                     });
                     continue;
                 }
@@ -94,8 +98,8 @@ namespace TexMotion.Editor
                 FileProgress = 1.0f,
                 CompletedFiles = totalFiles,
                 TotalFiles = totalFiles,
-                CurrentFileName = "Complete",
-                StatusText = "All models downloaded and ready!"
+                CurrentFileName = TexMotionLocalization.Tr(TexMotionLocalization.Complete),
+                StatusText = TexMotionLocalization.Tr(TexMotionLocalization.AllModelsReady)
             });
         }
 
@@ -128,7 +132,7 @@ namespace TexMotion.Editor
                     {
                         request.Abort();
                         if (File.Exists(tempPath)) File.Delete(tempPath);
-                        throw new OperationCanceledException("Download canceled by user.");
+                        throw new OperationCanceledException(TexMotionLocalization.Tr(TexMotionLocalization.DownloadCancelled));
                     }
 
                     float fileProg = request.downloadProgress;
@@ -142,7 +146,13 @@ namespace TexMotion.Editor
                         CompletedFiles = fileIndex,
                         TotalFiles = totalFiles,
                         CurrentFileName = fileName,
-                        StatusText = $"({fileIndex + 1}/{totalFiles}) Downloading {fileName}: {FormatBytes(downloaded)} ({(fileProg * 100):F0}%)"
+                        StatusText = TexMotionLocalization.TrFormat(
+                            TexMotionLocalization.DownloadingFile,
+                            fileIndex + 1,
+                            totalFiles,
+                            fileName,
+                            FormatBytes(downloaded),
+                            fileProg * 100f)
                     });
 
                     await Task.Delay(100, cancellationToken);
@@ -151,7 +161,11 @@ namespace TexMotion.Editor
                 if (request.result != UnityWebRequest.Result.Success)
                 {
                     if (File.Exists(tempPath)) File.Delete(tempPath);
-                    throw new Exception($"Failed to download {fileName}: {request.error} (URL: {downloadUrl})");
+                    throw new Exception(TexMotionLocalization.TrFormat(
+                        TexMotionLocalization.DownloadFailed,
+                        fileName,
+                        request.error,
+                        downloadUrl));
                 }
 
                 if (File.Exists(destinationPath))

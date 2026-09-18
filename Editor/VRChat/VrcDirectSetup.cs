@@ -58,7 +58,10 @@ namespace TexMotion.Editor.VRChat
             {
                 if (!AddControlToExpressionsMenu(targetMenu, config, paramName, saveDirectory))
                 {
-                    Debug.LogError($"[TexMotion] '{config.MotionName}' was not added to menu '{targetMenu.name}' (full and replacement was declined). Animator setup completed; run again after freeing a slot.");
+                    Debug.LogError(TexMotionLocalization.TrFormat(
+                        TexMotionLocalization.MenuMotionNotAdded,
+                        config.MotionName,
+                        targetMenu.name));
                 }
             }
 
@@ -154,7 +157,7 @@ namespace TexMotion.Editor.VRChat
             var baseLayersProp = descriptorSO.FindProperty("baseAnimationLayers");
             if (baseLayersProp == null || !baseLayersProp.isArray)
             {
-                Debug.LogError("[TexMotion] baseAnimationLayers property not found on descriptor.");
+                Debug.LogError(TexMotionLocalization.Tr(TexMotionLocalization.BaseAnimationLayersMissing));
                 return null;
             }
 
@@ -162,7 +165,9 @@ namespace TexMotion.Editor.VRChat
             int targetIdx = targetLayer == VrcTargetLayer.ActionLayer ? 3 : 4;
             if (baseLayersProp.arraySize <= targetIdx)
             {
-                Debug.LogError($"[TexMotion] baseAnimationLayers does not have layer index {targetIdx}.");
+                Debug.LogError(TexMotionLocalization.TrFormat(
+                    TexMotionLocalization.BaseAnimationLayerIndexMissing,
+                    targetIdx));
                 return null;
             }
 

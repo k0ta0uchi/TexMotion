@@ -37,7 +37,11 @@ namespace TexMotion.Editor.VRChat
                     return Enum.Parse(enumType, name);
                 }
             }
-            Debug.LogWarning($"[TexMotion] Enum member '{memberName}' not found on {enumType.Name}; using raw value {fallbackValue}.");
+            Debug.LogWarning(TexMotionLocalization.TrFormat(
+                TexMotionLocalization.EnumMemberMissing,
+                memberName,
+                enumType.Name,
+                fallbackValue));
             return Enum.ToObject(enumType, fallbackValue);
         }
 
@@ -59,7 +63,9 @@ namespace TexMotion.Editor.VRChat
                     return true;
                 }
             }
-            Debug.LogWarning($"[TexMotion] ControlType member '{memberName}' not found.");
+            Debug.LogWarning(TexMotionLocalization.TrFormat(
+                TexMotionLocalization.ControlTypeMissing,
+                memberName));
             return false;
         }
 
@@ -68,7 +74,7 @@ namespace TexMotion.Editor.VRChat
             Type t = FindVrcType("VRC.SDK3.Avatars.Components.VRCPlayableLayerControl");
             if (t == null)
             {
-                Debug.LogWarning("[TexMotion] VRCPlayableLayerControl not found; Action layer weight will not be controlled.");
+                Debug.LogWarning(TexMotionLocalization.Tr(TexMotionLocalization.PlayableLayerControlMissing));
                 return;
             }
 
@@ -89,7 +95,7 @@ namespace TexMotion.Editor.VRChat
             Type t = FindVrcType("VRC.SDK3.Avatars.Components.VRCAnimatorTrackingControl");
             if (t == null)
             {
-                Debug.LogWarning("[TexMotion] VRCAnimatorTrackingControl not found; tracking will not be switched.");
+                Debug.LogWarning(TexMotionLocalization.Tr(TexMotionLocalization.TrackingControlMissing));
                 return;
             }
 
@@ -119,7 +125,7 @@ namespace TexMotion.Editor.VRChat
             Type t = FindVrcType("VRC.SDK3.Avatars.Components.VRCAvatarParameterDriver");
             if (t == null)
             {
-                Debug.LogWarning("[TexMotion] VRCAvatarParameterDriver not found; one-shot parameter cannot be reset.");
+                Debug.LogWarning(TexMotionLocalization.Tr(TexMotionLocalization.ParameterDriverMissing));
                 return;
             }
 
@@ -153,7 +159,7 @@ namespace TexMotion.Editor.VRChat
             }
             else
             {
-                Debug.LogError("[TexMotion] Could not serialize ParameterDriver.parameters via SerializedObject.");
+                Debug.LogError(TexMotionLocalization.Tr(TexMotionLocalization.ParameterDriverSerializeFailed));
             }
 
             EditorUtility.SetDirty(behaviour);

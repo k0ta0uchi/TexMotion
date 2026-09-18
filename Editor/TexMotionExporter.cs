@@ -12,7 +12,11 @@ namespace TexMotion.Editor
         [MenuItem("Tools/TexMotion/Export UnityPackage", false, 100)]
         public static void ExportPackageMenu()
         {
-            string exportPath = EditorUtility.SaveFilePanel("Export TexMotion UnityPackage", "", PackageFileName, "unitypackage");
+            string exportPath = EditorUtility.SaveFilePanel(
+                TexMotionLocalization.Tr(TexMotionLocalization.ExportUnityPackage),
+                "",
+                PackageFileName,
+                "unitypackage");
             if (!string.IsNullOrEmpty(exportPath))
             {
                 ExportPackageTo(exportPath);
@@ -23,7 +27,7 @@ namespace TexMotion.Editor
         public static void ExportPackageBatch()
         {
             string workspacePackage = @"C:\Workspace\TexMotion\TexMotion.unitypackage";
-            ExportPackageTo(workspacePackage);
+            ExportPackageTo(workspacePackage, false);
 
             string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
             string outputPath = Path.Combine(projectRoot, PackageFileName);
@@ -37,7 +41,7 @@ namespace TexMotion.Editor
             }
         }
 
-        public static void ExportPackageTo(string outputPath)
+        public static void ExportPackageTo(string outputPath, bool interactive = false)
         {
             string packageRoot = "Packages/com.k0ta0uchi.texmotion";
             if (!Directory.Exists(packageRoot))
@@ -71,9 +75,9 @@ namespace TexMotion.Editor
                 existingAssets.Add("README.md");
             }
 
-            Debug.Log($"[TexMotion] Exporting package to: {outputPath}");
+            Debug.Log(TexMotionLocalization.TrFormat(TexMotionLocalization.ExportingPackage, outputPath));
             ExportPackageOptions options = ExportPackageOptions.Recurse;
-            if (!Application.isBatchMode)
+            if (interactive && !Application.isBatchMode)
             {
                 options |= ExportPackageOptions.Interactive;
             }
@@ -83,7 +87,7 @@ namespace TexMotion.Editor
                 outputPath,
                 options
             );
-            Debug.Log("[TexMotion] Export complete!");
+            Debug.Log(TexMotionLocalization.Tr(TexMotionLocalization.ExportComplete));
         }
     }
 }

@@ -65,12 +65,36 @@ namespace TexMotion.Editor.Video
             get
             {
                 if (!string.IsNullOrEmpty(_message)) return _message;
-                if (IsError) return $"[Video Error] {ErrorMessage}";
-                if (IsCompleted) return "Extraction complete!";
-                if (TotalFrames > 0) return $"{Stage} ({Percentage:F0}%) - Frame {CurrentFrame}/{TotalFrames}";
-                return $"{Stage} ({Percentage:F0}%)";
+                if (IsError)
+                {
+                    return TexMotionLocalization.TrFormat(
+                        TexMotionLocalization.VideoError,
+                        ErrorMessage ?? string.Empty);
+                }
+                if (IsCompleted) return TexMotionLocalization.Tr(TexMotionLocalization.ExtractionComplete);
+                string stageDisplay = FormatStageLabel(Stage);
+                if (TotalFrames > 0) return $"{stageDisplay} ({Percentage:F0}%) - Frame {CurrentFrame}/{TotalFrames}";
+                return $"{stageDisplay} ({Percentage:F0}%)";
             }
             set => _message = value;
+        }
+
+        private static string FormatStageLabel(string stage)
+        {
+            if (string.IsNullOrEmpty(stage)) return "processing";
+            switch (stage.ToLowerInvariant())
+            {
+                case "init": return TexMotionLocalization.TrLiteral("初期化中");
+                case "wham_sequence": return TexMotionLocalization.TrLiteral("WHAM時系列推論 (GPU)");
+                case "fusion_observing": return TexMotionLocalization.TrLiteral("空間観測フュージョン");
+                case "fusion_optimizing": return TexMotionLocalization.TrLiteral("姿勢最適化");
+                case "extracting": return TexMotionLocalization.TrLiteral("モーション抽出・描画");
+                case "foot_locking": return TexMotionLocalization.TrLiteral("接地ロック検出");
+                case "solving_ik": return TexMotionLocalization.TrLiteral("ヒューマノイドIK計算");
+                case "smoothing": return TexMotionLocalization.TrLiteral("モーション平滑化");
+                case "exporting": return TexMotionLocalization.TrLiteral("アニメーション書き出し");
+                default: return stage;
+            }
         }
 
         public bool IsCompleted => string.Equals(Stage, "completed", StringComparison.OrdinalIgnoreCase) || Progress >= 1.0f;
@@ -104,11 +128,149 @@ namespace TexMotion.Editor.Video
     }
 
     /// <summary>
+    /// Supported pose estimation backends for video-to-motion extraction.
+    /// </summary>
+    public enum VideoPoseBackend
+    {
+        Auto,
+        MediaPipe,
+        RTMPose,
+        /// <summary>Optional TorchScript or adapter-backed quality inference.</summary>
+        PyTorch,
+        /// <summary>WHAM temporal body-model adapter (requires the quality profile).</summary>
+        WHAM,
+        /// <summary>4D-Humans/HMR2 body-model adapter (requires the quality profile).</summary>
+        HMR2,
+        /// <summary>HybrIK body-model adapter (requires the quality profile).</summary>
+        HybrIK,
+        /// <summary>
+        /// Explicit WHAM-primary, MediaPipe-assisted temporal fusion.  This is
+        /// appended to preserve the serialized values of existing settings.
+        /// </summary>
+        WHAMMediaPipe
+    }
+
+    /// <summary>
+    /// Optional temporal fusion mode.  It is intentionally independent from
+    /// VideoPoseBackend so existing MediaPipe/RTMPose choices remain valid.
+    /// </summary>
+    public enum VideoFusionMode
+    {
+        Off,
+        WhamMediaPipe
+    }
+
+    /// <summary>
+    /// Visualization mode for pose overlay video rendering.
+    /// </summary>
+    public enum VideoOverlayMode
+    {
+        /// <summary>Dual comparison: 2D detector guide (subtle) + 3D pose projection (vibrant neon). Recommended.</summary>
+        Dual = 0,
+        /// <summary>WHAM 3D pose hypothesis projection only.</summary>
+        Pose3D = 1,
+        /// <summary>Direct 2D detector keypoints tracking only.</summary>
+        Tracking2D = 2
+    }
+
+    /// <summary>
     /// Configuration options for invoking the video pose extraction pipeline.
     /// </summary>
     [Serializable]
     public class VideoJobOptions
     {
+        private const string DefaultPyTorchDevice = "auto";
+
+        /// <summary>
+        /// Pose estimation backend to use (Auto, MediaPipe, RTMPose, or an optional
+        /// PyTorch/WHAM/WHAMMediaPipe/HMR2/HybrIK quality adapter).
+        /// </summary>
+        public VideoPoseBackend Backend = VideoPoseBackend.Auto;
+
+        /// <summary>
+        /// Explicit fusion mode passed to the extractor.  WHAM selections use
+        /// WHAM + MediaPipe by default; legacy backends remain unchanged.
+        /// </summary>
+        public VideoFusionMode FusionMode = VideoFusionMode.Off;
+
+        /// <summary>Optional TorchScript checkpoint for the quality backend.</summary>
+        public string PyTorchModelPath = null;
+
+        /// <summary>Optional adapter module or .py file for WHAM/WHAMMediaPipe/HMR2/HybrIK.</summary>
+        public string PyTorchAdapterModule = null;
+
+        /// <summary>Quality backend device: auto, cpu, or cuda.</summary>
+        public string PyTorchDevice = DefaultPyTorchDevice;
+
+        /// <summary>Optional maximum sequence length for a temporal quality backend.</summary>
+        public int MaxSequenceFrames = 0;
+
+        /// <summary>Directory containing downloaded RTMPose/DWPose and MediaPipe assets.</summary>
+        public string VideoModelDirectory = null;
+
+        /// <summary>Optional official 4D-Humans/HMR2 source checkout or runtime path.</summary>
+        public string HMR2RuntimePath = null;
+
+        /// <summary>
+        /// Explicit official HMR2 image-feature checkpoint.  The current
+        /// extractor receives this through its legacy image-feature checkpoint
+        /// option for the official WHAM/HMR2 route; keeping the value here
+        /// lets Settings and diagnostics preserve an explicit user path
+        /// without confusing it with the ViTPose 2D detector.
+        /// </summary>
+        public string HMR2CheckpointPath = null;
+
+        /// <summary>Optional licensed neutral SMPL body model used by official HMR2.</summary>
+        public string HMR2BodyModelPath = null;
+
+        /// <summary>Optional explicit WHAM offline asset manifest.</summary>
+        public string WhamAssetManifestPath = null;
+
+        /// <summary>Optional SMPL/SMPL-X body model used by the WHAM decoder.</summary>
+        public string WhamBodyModelPath = null;
+
+        /// <summary>Optional ViTPose image-feature backbone checkpoint.</summary>
+        public string WhamImageFeatureBackbonePath = null;
+
+        /// <summary>Optional ViTPose model-definition module or Python file.</summary>
+        public string WhamImageFeatureModelDefinitionPath = null;
+
+        /// <summary>Optional ViTPose runner/model config path.</summary>
+        public string WhamImageFeatureConfigPath = null;
+
+        /// <summary>Logical WHAM image-feature runner selection.</summary>
+        public string WHAMRunnerKind = "official_hmr2";
+
+        /// <summary>Optional compatible ViTPose/MMPose runtime path.</summary>
+        public string ViTPoseRuntimePath = null;
+
+        /// <summary>Optional output key and expected feature dimension for diagnostics.</summary>
+        public string ImageFeatureOutputKey = null;
+        public int ImageFeatureDim = 0;
+
+        /// <summary>Fallback policy retained in the editor-side job contract.</summary>
+        public bool AllowMediaPipeFallback = true;
+        public bool RequireImageFeatures = false;
+
+        /// <summary>Optional precomputed WHAM image-feature archive.</summary>
+        public string WhamImageFeaturePath = null;
+
+        /// <summary>Optional camera calibration or exported camera-motion archive.</summary>
+        public string WhamCameraModelPath = null;
+
+        /// <summary>Optional DPVO checkpoint or exported camera-motion archive.</summary>
+        public string WhamDpvoModelPath = null;
+
+        /// <summary>
+        /// Optional per-video cache for WHAM image features and camera poses.
+        /// When empty, the Python extractor places a hidden cache beside the
+        /// output motion JSON so each video gets its own aligned archives.
+        /// </summary>
+        public string WhamPreprocessDirectory = null;
+
+        /// <summary>Optional explicit RTMPose/DWPose ONNX file selected in the Settings catalog.</summary>
+        public string RTMPoseModelPath = null;
+
         /// <summary>
         /// Path to the source video file (MP4, MOV, AVI, etc.).
         /// </summary>
@@ -125,6 +287,11 @@ namespace TexMotion.Editor.Video
         /// If empty, the extractor generates a default _overlay.mp4 alongside the output JSON.
         /// </summary>
         public string OverlayVideoPath = string.Empty;
+
+        /// <summary>
+        /// Visualization mode for pose overlay video rendering (Dual, Pose3D, Tracking2D).
+        /// </summary>
+        public VideoOverlayMode OverlayMode = VideoOverlayMode.Dual;
 
         /// <summary>
         /// Optional explicit path to the Python executable. If null, auto-detection is used.
@@ -237,6 +404,14 @@ namespace TexMotion.Editor.Video
                 sb.Append($" --overlay-video \"{OverlayVideoPath}\"");
             }
 
+            string overlayModeArg = OverlayMode switch
+            {
+                VideoOverlayMode.Pose3D => "3d",
+                VideoOverlayMode.Tracking2D => "2d",
+                _ => "dual"
+            };
+            sb.Append($" --overlay-mode {overlayModeArg}");
+
             if (TargetFps > 0f)
             {
                 sb.Append($" --fps {TargetFps.ToString("F2", CultureInfo.InvariantCulture)}");
@@ -271,7 +446,128 @@ namespace TexMotion.Editor.Video
             sb.Append($" --min-detection-confidence {MinDetectionConfidence.ToString("F2", CultureInfo.InvariantCulture)}");
             sb.Append($" --min-tracking-confidence {MinTrackingConfidence.ToString("F2", CultureInfo.InvariantCulture)}");
 
+            string backendArg = Backend switch
+            {
+                VideoPoseBackend.MediaPipe => "mediapipe",
+                VideoPoseBackend.RTMPose => "rtmpose",
+                VideoPoseBackend.PyTorch => "pytorch",
+                VideoPoseBackend.WHAM => "wham",
+                VideoPoseBackend.HMR2 => "hmr2",
+                VideoPoseBackend.HybrIK => "hybrik",
+                VideoPoseBackend.WHAMMediaPipe => "wham",
+                _ => "auto"
+            };
+            sb.Append($" --backend {backendArg}");
+
+            bool whamBackend = Backend == VideoPoseBackend.WHAM || Backend == VideoPoseBackend.WHAMMediaPipe;
+            string fusionModeArg = (FusionMode == VideoFusionMode.WhamMediaPipe || Backend == VideoPoseBackend.WHAMMediaPipe)
+                ? "wham_mediapipe"
+                : "off";
+            if (whamBackend && FusionMode == VideoFusionMode.Off)
+            {
+                fusionModeArg = "wham_mediapipe";
+            }
+            sb.Append($" --fusion-mode {fusionModeArg}");
+
+            if (Backend == VideoPoseBackend.PyTorch || whamBackend ||
+                Backend == VideoPoseBackend.HMR2 || Backend == VideoPoseBackend.HybrIK)
+            {
+                if (!string.IsNullOrWhiteSpace(PyTorchModelPath))
+                    sb.Append($" --pytorch-model \"{PyTorchModelPath}\"");
+                if (!string.IsNullOrWhiteSpace(PyTorchAdapterModule))
+                    sb.Append($" --pytorch-adapter \"{PyTorchAdapterModule}\"");
+                string device = string.IsNullOrWhiteSpace(PyTorchDevice) ? DefaultPyTorchDevice : PyTorchDevice.Trim().ToLowerInvariant();
+                if (device == "auto" || device == "cpu" || device == "cuda")
+                    sb.Append($" --pytorch-device {device}");
+                if (MaxSequenceFrames > 0)
+                    sb.Append($" --max-sequence-frames {MaxSequenceFrames}");
+            }
+
+            AppendQuotedOption(sb, "--video-model-dir", VideoModelDirectory);
+            AppendQuotedOption(sb, "--hmr2-runtime", HMR2RuntimePath);
+            AppendQuotedOption(sb, "--hmr2-body-model", HMR2BodyModelPath);
+            AppendQuotedOption(sb, "--rtmpose-model", RTMPoseModelPath);
+            AppendQuotedOption(sb, "--wham-asset-manifest", WhamAssetManifestPath);
+            AppendQuotedOption(sb, "--wham-body-model", WhamBodyModelPath);
+            // The legacy Python CLI exposes one image-feature checkpoint
+            // option. For the official HMR2 route, use the separately
+            // resolved HMR2 checkpoint there; compatible ViTPose/archive
+            // routes retain their own configured path. The C# settings and
+            // result metadata still keep these sources explicitly separate.
+            string imageFeatureCheckpoint = WhamImageFeatureBackbonePath;
+            if (whamBackend &&
+                string.Equals(WHAMRunnerKind, TexMotionWhamRunnerKinds.OfficialHmr2, StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(HMR2CheckpointPath))
+            {
+                imageFeatureCheckpoint = HMR2CheckpointPath;
+            }
+            AppendQuotedOption(sb, "--wham-image-feature-backbone", imageFeatureCheckpoint);
+            AppendQuotedOption(sb, "--wham-image-feature-model-definition", WhamImageFeatureModelDefinitionPath);
+            AppendQuotedOption(sb, "--wham-image-feature-config", WhamImageFeatureConfigPath);
+            AppendQuotedOption(sb, "--wham-image-features", WhamImageFeaturePath);
+            AppendQuotedOption(sb, "--wham-camera", WhamCameraModelPath);
+            AppendQuotedOption(sb, "--wham-dpvo", WhamDpvoModelPath);
+            AppendQuotedOption(sb, "--wham-preprocess-dir", WhamPreprocessDirectory);
+
             return sb.ToString();
+        }
+
+        private static void AppendQuotedOption(StringBuilder arguments, string option, string value)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                arguments.Append($" {option} \"{value}\"");
+        }
+    }
+
+    /// <summary>
+    /// Options for the Settings one-click ViTPose feature archive exporter.
+    /// The exporter writes an aligned ``vitpose_features.npz`` file and does
+    /// not run the full pose-to-motion conversion.
+    /// </summary>
+    [Serializable]
+    public class ViTPoseFeatureExportOptions
+    {
+        public string VideoPath = string.Empty;
+        public string OutputPath = string.Empty;
+        public string PythonExecutable = null;
+        public string ScriptPath = null;
+        public float TargetFps = 30.0f;
+        public float TrimStart = 0.0f;
+        public float TrimEnd = 0.0f;
+        public string CheckpointPath = null;
+        public string ModelDefinitionPath = null;
+        public string ConfigPath = null;
+        public string Device = "auto";
+        public int ChunkSize = 32;
+
+        public string BuildCommandLineArguments(string scriptPath, string effectiveOutputPath)
+        {
+            var sb = new StringBuilder();
+            sb.Append('"').Append(scriptPath).Append('"');
+            AppendQuotedOption(sb, "--video", VideoPath);
+            AppendQuotedOption(sb, "--output", effectiveOutputPath);
+            sb.Append(" --export-vitpose-features");
+            if (TargetFps > 0f)
+                sb.Append(" --fps ").Append(TargetFps.ToString("F2", CultureInfo.InvariantCulture));
+            if (TrimStart > 0f)
+                sb.Append(" --trim-start ").Append(TrimStart.ToString("F2", CultureInfo.InvariantCulture));
+            if (TrimEnd > 0f)
+                sb.Append(" --trim-end ").Append(TrimEnd.ToString("F2", CultureInfo.InvariantCulture));
+            AppendQuotedOption(sb, "--wham-image-feature-backbone", CheckpointPath);
+            AppendQuotedOption(sb, "--wham-image-feature-model-definition", ModelDefinitionPath);
+            AppendQuotedOption(sb, "--wham-image-feature-config", ConfigPath);
+            string device = string.IsNullOrWhiteSpace(Device) ? "auto" : Device.Trim().ToLowerInvariant();
+            if (device == "auto" || device == "cpu" || device == "cuda")
+                sb.Append(" --pytorch-device ").Append(device);
+            if (ChunkSize > 0)
+                sb.Append(" --vitpose-feature-chunk-size ").Append(ChunkSize.ToString(CultureInfo.InvariantCulture));
+            return sb.ToString();
+        }
+
+        private static void AppendQuotedOption(StringBuilder arguments, string option, string value)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                arguments.Append(' ').Append(option).Append(" \"").Append(value).Append('"');
         }
     }
 
@@ -298,37 +594,50 @@ namespace TexMotion.Editor.Video
         public bool HasOpenCV;
         public bool HasNumPy;
         public bool HasSciPy;
+        public bool HasOnnxRuntime;
+        public bool HasTorch;
+        public bool HasCuda;
         public string ErrorMessage;
 
         /// <summary>
-        /// True if Python is available and required core dependencies (MediaPipe, OpenCV) are installed.
+        /// True if Python is available and the extractor's mandatory core
+        /// dependencies (MediaPipe, OpenCV, NumPy) are installed. SciPy and
+        /// ONNX Runtime remain optional for the MediaPipe-only path.
         /// </summary>
-        public bool IsFullyConfigured => IsAvailable && HasMediaPipe && HasOpenCV;
+        public bool IsFullyConfigured => IsAvailable && HasMediaPipe && HasOpenCV && HasNumPy;
 
         public string GetSummary()
         {
             if (!IsAvailable)
             {
-                return $"Python Unavailable: {ErrorMessage ?? "Not detected"}";
+                return TexMotionLocalization.TrFormat(
+                    TexMotionLocalization.PythonUnavailableSummary,
+                    ErrorMessage ?? TexMotionLocalization.Tr(TexMotionLocalization.NotDetected));
             }
 
             var sb = new StringBuilder();
-            sb.Append($"Python {Version ?? "Unknown"} ({ExecutablePath})");
-            if (IsVirtualEnv) sb.Append(" [VirtualEnv]");
+            sb.Append(TexMotionLocalization.TrFormat(
+                TexMotionLocalization.PythonSummary,
+                Version ?? TexMotionLocalization.Tr(TexMotionLocalization.Unknown),
+                ExecutablePath));
+            if (IsVirtualEnv) sb.Append(TexMotionLocalization.Tr(TexMotionLocalization.VirtualEnvironmentSuffix));
 
             var missing = new List<string>();
             if (!HasMediaPipe) missing.Add("mediapipe");
             if (!HasOpenCV) missing.Add("opencv-python");
             if (!HasNumPy) missing.Add("numpy");
             if (!HasSciPy) missing.Add("scipy");
+            if (!HasOnnxRuntime) missing.Add("onnxruntime (optional for RTMPose)");
 
             if (missing.Count == 0)
             {
-                sb.Append(" - All dependencies ready");
+                sb.Append(TexMotionLocalization.Tr(TexMotionLocalization.DependenciesReadySummary));
             }
             else
             {
-                sb.Append($" - Missing packages: {string.Join(", ", missing)}");
+                sb.Append(TexMotionLocalization.TrFormat(
+                    TexMotionLocalization.MissingPackagesSummary,
+                    string.Join(", ", missing)));
             }
 
             return sb.ToString();
@@ -368,6 +677,34 @@ namespace TexMotion.Editor.Video
     /// </summary>
     public static class VideoMotionJobRunner
     {
+        /// <summary>
+        /// Adds an actionable explanation for Windows process termination
+        /// codes that are emitted by native ML runtimes before Python can
+        /// write a traceback.  In particular, -1073741819 is 0xC0000005,
+        /// an access violation commonly raised by TFLite/XNNPACK, ONNX
+        /// Runtime, or a native video codec DLL.
+        /// </summary>
+        private static string DescribeNativeExitCode(int exitCode)
+        {
+            uint unsignedCode = unchecked((uint)exitCode);
+            switch (unsignedCode)
+            {
+                case 0xC0000005u:
+                    return "Native process access violation (0xC0000005). " +
+                           "The extraction process was terminated inside a native ML/video DLL; " +
+                           "the last stage above identifies the likely backend. " +
+                           "For WHAM, keep one MediaPipe/TFLite graph per process and verify the local model assets.";
+                case 0xC0000409u:
+                    return "Native process stack-buffer overrun (0xC0000409). " +
+                           "Check the selected ML backend and its native runtime installation.";
+                case 0xC000001Du:
+                    return "Native process illegal instruction (0xC000001D). " +
+                           "The selected runtime may require CPU instructions unavailable on this machine.";
+                default:
+                    return null;
+            }
+        }
+
         #region Public Async Extraction API
 
         /// <summary>
@@ -395,8 +732,7 @@ namespace TexMotion.Editor.Video
             if (string.IsNullOrEmpty(scriptPath) || !File.Exists(scriptPath))
             {
                 throw new FileNotFoundException(
-                    "video_pose_extractor.py script could not be located in package or Assets. " +
-                    "Ensure Editor/Video/video_pose_extractor.py exists.");
+                    TexMotionLocalization.Tr(TexMotionLocalization.ExtractorScriptMissing));
             }
 
             // 2. Resolve Python executable
@@ -405,7 +741,7 @@ namespace TexMotion.Editor.Video
             {
                 try
                 {
-                    pythonExe = TexMotionSettings.instance?.CustomPythonExecutablePath;
+                    pythonExe = TexMotionSettings.instance?.GetEffectiveVideoPythonExecutablePath();
                 }
                 catch {}
             }
@@ -415,12 +751,34 @@ namespace TexMotion.Editor.Video
                 var runtime = DetectPythonRuntime();
                 if (!runtime.IsAvailable)
                 {
-                    throw new InvalidOperationException(
-                        "No working Python runtime found on system. " +
-                        "Please install Python 3.10+ (with mediapipe and opencv-python) " +
-                        "or specify the Python path in TexMotion Settings.\nDetails: " + runtime.ErrorMessage);
+                    throw new InvalidOperationException(TexMotionLocalization.TrFormat(
+                        TexMotionLocalization.NoWorkingPythonRuntime,
+                        runtime.ErrorMessage));
                 }
                 pythonExe = runtime.ExecutablePath;
+            }
+
+            // Probe the exact interpreter that will launch the extractor.  The
+            // script imports NumPy before it can emit a JSON diagnostic, so
+            // allowing the process to start with a broken environment only
+            // produces an opaque ModuleNotFoundError dialog in Unity.
+            PythonRuntimeInfo selectedRuntime = ProbePythonExecutable(pythonExe);
+            bool syntheticRun = options.SyntheticFallback || string.IsNullOrEmpty(options.VideoPath);
+            var missingDependencies = new List<string>();
+            if (!selectedRuntime.IsAvailable)
+            {
+                throw new InvalidOperationException(TexMotionLocalization.TrFormat(
+                    TexMotionLocalization.SelectedPythonRuntimeFailed,
+                    selectedRuntime.ErrorMessage ?? pythonExe));
+            }
+            if (!selectedRuntime.HasNumPy) missingDependencies.Add("numpy");
+            if (!syntheticRun && !selectedRuntime.HasOpenCV) missingDependencies.Add("opencv-python");
+            if (missingDependencies.Count > 0)
+            {
+                throw new InvalidOperationException(TexMotionLocalization.TrFormat(
+                    TexMotionLocalization.MissingVideoDependencies,
+                    string.Join(", ", missingDependencies),
+                    selectedRuntime.ExecutablePath));
             }
 
             // 3. Resolve effective output path
@@ -518,7 +876,9 @@ namespace TexMotion.Editor.Video
                 {
                     if (!process.Start())
                     {
-                        throw new InvalidOperationException($"Failed to start Python process: {pythonExe}");
+                        throw new InvalidOperationException(TexMotionLocalization.TrFormat(
+                            TexMotionLocalization.FailedToStartPythonProcess,
+                            pythonExe));
                     }
 
                     process.BeginOutputReadLine();
@@ -540,7 +900,9 @@ namespace TexMotion.Editor.Video
 
                     if (cancellationToken.IsCancellationRequested)
                     {
-                        throw new OperationCanceledException("Video motion extraction was canceled.", cancellationToken);
+                        throw new OperationCanceledException(
+                            TexMotionLocalization.Tr(TexMotionLocalization.ExtractionCancelled),
+                            cancellationToken);
                     }
 
                     string stderrText;
@@ -552,22 +914,41 @@ namespace TexMotion.Editor.Video
                     if (exitCode != 0)
                     {
                         string msg = string.IsNullOrEmpty(stageErrorMessage)
-                            ? $"Video pose extraction failed with exit code {exitCode}.\nDiagnostics:\n{stderrText}"
-                            : $"Video pose extraction failed during stage '{lastStage}': {stageErrorMessage}\nDiagnostics:\n{stderrText}";
+                            ? TexMotionLocalization.TrFormat(
+                                TexMotionLocalization.ExtractionFailedExitCode,
+                                exitCode,
+                                stderrText)
+                            : TexMotionLocalization.TrFormat(
+                                TexMotionLocalization.ExtractionFailedStage,
+                                lastStage,
+                                stageErrorMessage,
+                                stderrText);
+                        string nativeDiagnostic = DescribeNativeExitCode(exitCode);
+                        if (!string.IsNullOrEmpty(nativeDiagnostic))
+                        {
+                            msg += "\nDiagnostic: " + nativeDiagnostic;
+                        }
                         throw new VideoExtractionException(msg, exitCode, stderrText, lastStage);
                     }
 
                     if (!string.IsNullOrEmpty(stageErrorMessage))
                     {
                         throw new VideoExtractionException(
-                            $"Video pose extraction reported error: {stageErrorMessage}\nDiagnostics:\n{stderrText}",
-                            exitCode, stderrText, lastStage);
+                            TexMotionLocalization.TrFormat(
+                                TexMotionLocalization.ExtractionReportedError,
+                                stageErrorMessage,
+                                stderrText),
+                            exitCode,
+                            stderrText,
+                            lastStage);
                     }
                 }
                 catch (Exception) when (cancellationToken.IsCancellationRequested)
                 {
                     KillProcessTree(process);
-                    throw new OperationCanceledException("Video motion extraction was canceled.", cancellationToken);
+                    throw new OperationCanceledException(
+                        TexMotionLocalization.Tr(TexMotionLocalization.ExtractionCancelled),
+                        cancellationToken);
                 }
             }
 
@@ -579,8 +960,10 @@ namespace TexMotion.Editor.Video
                 {
                     stderrText = stderrBuilder.ToString();
                 }
-                throw new FileNotFoundException(
-                    $"Expected output motion JSON file not found at: {outputPath}.\nDiagnostics:\n{stderrText}");
+                throw new FileNotFoundException(TexMotionLocalization.TrFormat(
+                    TexMotionLocalization.OutputMotionFileMissing,
+                    outputPath,
+                    stderrText));
             }
 
             // 8. Deserialize into VideoMotionData
@@ -595,6 +978,156 @@ namespace TexMotion.Editor.Video
                 new VideoJobProgress(1.0f, "completed", motionData.Frames, motionData.Frames, outputPath));
 
             return motionData;
+        }
+
+        /// <summary>
+        /// Runs the lightweight ViTPose archive exporter used by Settings. The
+        /// process emits the same JSONL progress contract as normal extraction,
+        /// while the returned path points to a validated ``.npz`` archive.
+        /// </summary>
+        public static async Task<string> RunViTPoseFeatureExportAsync(
+            ViTPoseFeatureExportOptions options,
+            IProgress<VideoJobProgress> progress = null,
+            CancellationToken cancellationToken = default,
+            Action<string> onStderrLine = null)
+        {
+            if (options == null) throw new ArgumentNullException(nameof(options));
+            if (string.IsNullOrWhiteSpace(options.VideoPath) || !File.Exists(options.VideoPath))
+                throw new FileNotFoundException("ViTPose feature export video was not found.", options.VideoPath);
+
+            string scriptPath = options.ScriptPath;
+            if (string.IsNullOrEmpty(scriptPath) || !File.Exists(scriptPath))
+                scriptPath = FindScriptPath();
+            if (string.IsNullOrEmpty(scriptPath) || !File.Exists(scriptPath))
+                throw new FileNotFoundException(TexMotionLocalization.Tr(TexMotionLocalization.ExtractorScriptMissing));
+
+            string pythonExe = options.PythonExecutable;
+            if (string.IsNullOrEmpty(pythonExe))
+            {
+                try { pythonExe = TexMotionSettings.instance?.GetEffectiveVideoPythonExecutablePath(); }
+                catch { }
+            }
+            if (string.IsNullOrEmpty(pythonExe) || !File.Exists(pythonExe))
+            {
+                var runtime = DetectPythonRuntime();
+                if (!runtime.IsAvailable)
+                    throw new InvalidOperationException(TexMotionLocalization.TrFormat(
+                        TexMotionLocalization.NoWorkingPythonRuntime, runtime.ErrorMessage));
+                pythonExe = runtime.ExecutablePath;
+            }
+
+            PythonRuntimeInfo selectedRuntime = ProbePythonExecutable(pythonExe);
+            if (!selectedRuntime.IsAvailable)
+                throw new InvalidOperationException(TexMotionLocalization.TrFormat(
+                    TexMotionLocalization.SelectedPythonRuntimeFailed,
+                    selectedRuntime.ErrorMessage ?? pythonExe));
+            var missingDependencies = new List<string>();
+            if (!selectedRuntime.HasNumPy) missingDependencies.Add("numpy");
+            if (!selectedRuntime.HasOpenCV) missingDependencies.Add("opencv-python");
+            if (missingDependencies.Count > 0)
+                throw new InvalidOperationException(TexMotionLocalization.TrFormat(
+                    TexMotionLocalization.MissingVideoDependencies,
+                    string.Join(", ", missingDependencies), selectedRuntime.ExecutablePath));
+
+            string outputPath = options.OutputPath;
+            if (string.IsNullOrWhiteSpace(outputPath))
+            {
+                string cache = Path.Combine(Path.GetTempPath(), "TexMotion", "VideoJobs");
+                Directory.CreateDirectory(cache);
+                outputPath = Path.Combine(cache, "vitpose_features_" + Guid.NewGuid().ToString("N") + ".npz");
+            }
+            if (!outputPath.EndsWith(".npz", StringComparison.OrdinalIgnoreCase))
+                outputPath += ".npz";
+            string outDir = Path.GetDirectoryName(outputPath);
+            if (!string.IsNullOrEmpty(outDir)) Directory.CreateDirectory(outDir);
+
+            string arguments = options.BuildCommandLineArguments(scriptPath, outputPath);
+            var syncContext = SynchronizationContext.Current;
+            var stderrBuilder = new StringBuilder();
+            string lastStage = "init";
+            string stageErrorMessage = null;
+            var psi = new ProcessStartInfo
+            {
+                FileName = pythonExe,
+                Arguments = arguments,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8,
+                WorkingDirectory = Path.GetDirectoryName(scriptPath)
+            };
+            psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
+            psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
+            using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            var tcs = new TaskCompletionSource<int>();
+            process.Exited += (s, e) => tcs.TrySetResult(process.ExitCode);
+            process.OutputDataReceived += (s, e) =>
+            {
+                if (e.Data == null) return;
+                if (TryParseProgressJson(e.Data, out var item))
+                {
+                    lastStage = item.Stage;
+                    if (item.IsError) stageErrorMessage = item.ErrorMessage;
+                    DispatchProgress(syncContext, progress, null, null, item);
+                }
+            };
+            process.ErrorDataReceived += (s, e) =>
+            {
+                if (e.Data == null) return;
+                lock (stderrBuilder) stderrBuilder.AppendLine(e.Data);
+                onStderrLine?.Invoke(e.Data);
+            };
+
+            using (cancellationToken.Register(() =>
+            {
+                KillProcessTree(process);
+                tcs.TrySetCanceled(cancellationToken);
+            }))
+            {
+                try
+                {
+                    if (!process.Start())
+                        throw new InvalidOperationException(TexMotionLocalization.TrFormat(
+                            TexMotionLocalization.FailedToStartPythonProcess, pythonExe));
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
+                    DispatchProgress(syncContext, progress, null, null,
+                        new VideoJobProgress(0.01f, "vitpose_features_init", 0, 0));
+                    if (process.HasExited) tcs.TrySetResult(process.ExitCode);
+                    int exitCode = await tcs.Task.ConfigureAwait(false);
+                    process.WaitForExit();
+                    if (cancellationToken.IsCancellationRequested)
+                        throw new OperationCanceledException(TexMotionLocalization.Tr(TexMotionLocalization.ExtractionCancelled), cancellationToken);
+                    string stderrText;
+                    lock (stderrBuilder) stderrText = stderrBuilder.ToString();
+                    if (exitCode != 0)
+                    {
+                        string message = string.IsNullOrEmpty(stageErrorMessage)
+                            ? TexMotionLocalization.TrFormat(TexMotionLocalization.ExtractionFailedExitCode, exitCode, stderrText)
+                            : TexMotionLocalization.TrFormat(TexMotionLocalization.ExtractionFailedStage, lastStage, stageErrorMessage, stderrText);
+                        string nativeDiagnostic = DescribeNativeExitCode(exitCode);
+                        if (!string.IsNullOrEmpty(nativeDiagnostic)) message += "\nDiagnostic: " + nativeDiagnostic;
+                        throw new VideoExtractionException(message, exitCode, stderrText, lastStage);
+                    }
+                    if (!string.IsNullOrEmpty(stageErrorMessage))
+                        throw new VideoExtractionException(
+                            TexMotionLocalization.TrFormat(TexMotionLocalization.ExtractionReportedError, stageErrorMessage, stderrText),
+                            exitCode, stderrText, lastStage);
+                }
+                catch (Exception) when (cancellationToken.IsCancellationRequested)
+                {
+                    KillProcessTree(process);
+                    throw new OperationCanceledException(TexMotionLocalization.Tr(TexMotionLocalization.ExtractionCancelled), cancellationToken);
+                }
+            }
+
+            if (!File.Exists(outputPath) || new FileInfo(outputPath).Length <= 0)
+                throw new FileNotFoundException("ViTPose feature export did not produce a readable .npz archive.", outputPath);
+            DispatchProgress(syncContext, progress, null, null,
+                new VideoJobProgress(1.0f, "completed", 0, 0, outputPath));
+            return Path.GetFullPath(outputPath);
         }
 
         /// <summary>
@@ -753,6 +1286,16 @@ namespace TexMotion.Editor.Video
             return defaultValue;
         }
 
+        private static bool ExtractBool(string json, string key, bool defaultValue)
+        {
+            var m = Regex.Match(json, $"\"{key}\"\\s*:\\s*(true|false)", RegexOptions.IgnoreCase);
+            if (m.Success && bool.TryParse(m.Groups[1].Value, out bool value))
+            {
+                return value;
+            }
+            return defaultValue;
+        }
+
         private static string ExtractString(string json, string key, string defaultValue)
         {
             var m = Regex.Match(json, $"\"{key}\"\\s*:\\s*\"([^\"]*)\"");
@@ -792,7 +1335,9 @@ namespace TexMotion.Editor.Video
 
             if (!File.Exists(filePath))
             {
-                throw new FileNotFoundException($"Motion JSON file not found: {filePath}");
+                throw new FileNotFoundException(TexMotionLocalization.TrFormat(
+                    TexMotionLocalization.MotionJsonNotFound,
+                    filePath));
             }
 
             string jsonText = File.ReadAllText(filePath, Encoding.UTF8);
@@ -812,7 +1357,9 @@ namespace TexMotion.Editor.Video
         {
             if (string.IsNullOrEmpty(jsonText))
             {
-                throw new ArgumentNullException(nameof(jsonText), "JSON content cannot be null or empty.");
+                throw new ArgumentNullException(
+                    nameof(jsonText),
+                    TexMotionLocalization.Tr(TexMotionLocalization.JsonContentEmpty));
             }
 
             MotionDataJsonDto dto = null;
@@ -832,11 +1379,17 @@ namespace TexMotion.Editor.Video
 
             if (dto == null || dto.frames <= 0)
             {
-                throw new FormatException("Failed to deserialize motion JSON into MotionDataJsonDto. Ensure valid JSON payload.");
+                throw new FormatException(TexMotionLocalization.Tr(
+                    TexMotionLocalization.MotionJsonDeserializeFailed));
             }
 
             int frames = dto.frames;
-            int jointCount = dto.jointCount > 0 ? dto.jointCount : SmplxJointDefinitions.JointCount;
+            int parsedJointCount = dto.jointCount > 0 ? dto.jointCount : SmplxJointDefinitions.JointCount;
+            // VideoMotionData is a SMPL-X22 runtime contract.  Older or
+            // malformed payloads may advertise a different count; preserve
+            // the available prefix and fill the canonical 22-joint shape so
+            // downstream retargeting never receives an incompatible matrix.
+            int jointCount = SmplxJointDefinitions.JointCount;
             float frameRate = dto.frameRate > 0f ? dto.frameRate : 30.0f;
 
             // 1. Root positions
@@ -845,7 +1398,10 @@ namespace TexMotion.Editor.Video
             {
                 for (int t = 0; t < frames; t++)
                 {
-                    rootPositions[t] = new Vector3(dto.rootPositions[t].x, dto.rootPositions[t].y, dto.rootPositions[t].z);
+                    rootPositions[t] = new Vector3(
+                        SanitizeFinite(dto.rootPositions[t].x),
+                        SanitizeFinite(dto.rootPositions[t].y),
+                        SanitizeFinite(dto.rootPositions[t].z));
                 }
             }
             else
@@ -858,24 +1414,40 @@ namespace TexMotion.Editor.Video
 
             // 2. 22 Local rotations
             var localRotations = new Quaternion[frames, jointCount];
-            if (dto.flatLocalRotations != null && dto.flatLocalRotations.Length >= frames * jointCount)
+            if (dto.flatLocalRotations != null && dto.flatLocalRotations.Length >= frames * parsedJointCount)
             {
                 for (int t = 0; t < frames; t++)
                 {
                     for (int j = 0; j < jointCount; j++)
                     {
-                        var q = dto.flatLocalRotations[t * jointCount + j];
-                        localRotations[t, j] = new Quaternion(q.x, q.y, q.z, q.w);
+                        int sourceIndex = t * parsedJointCount + j;
+                        if (j < parsedJointCount && sourceIndex < dto.flatLocalRotations.Length)
+                        {
+                            var q = dto.flatLocalRotations[sourceIndex];
+                            localRotations[t, j] = SanitizeQuaternion(q);
+                        }
+                        else
+                        {
+                            localRotations[t, j] = Quaternion.identity;
+                        }
                     }
                 }
             }
             else
             {
                 // Fallback: parse from nested localRotations if flatLocalRotations wasn't present
-                var fallbackRotations = ParseLocalRotationsFallback(jsonText, frames, jointCount);
+                var fallbackRotations = ParseLocalRotationsFallback(jsonText, frames, parsedJointCount);
                 if (fallbackRotations != null)
                 {
-                    localRotations = fallbackRotations;
+                    for (int t = 0; t < frames; t++)
+                    {
+                        for (int j = 0; j < jointCount; j++)
+                        {
+                            localRotations[t, j] = j < parsedJointCount
+                                ? SanitizeQuaternion(fallbackRotations[t, j])
+                                : Quaternion.identity;
+                        }
+                    }
                 }
                 else
                 {
@@ -893,6 +1465,105 @@ namespace TexMotion.Editor.Video
             float[] timestamps = dto.timestamps;
             float[] confidences = dto.confidences;
 
+            // 4. Uncertainty Intervals (Phases 3-4)
+            UncertaintyInterval[] intervals = null;
+            if (dto.uncertaintyIntervals != null && dto.uncertaintyIntervals.Length > 0)
+            {
+                var list = new System.Collections.Generic.List<UncertaintyInterval>();
+                for (int i = 0; i < dto.uncertaintyIntervals.Length; i++)
+                {
+                    var u = dto.uncertaintyIntervals[i];
+                    if (u != null)
+                    {
+                        int startFrame = Mathf.Clamp(u.startFrame, 0, frames - 1);
+                        int endFrame = Mathf.Clamp(u.endFrame, startFrame, frames - 1);
+                        var interval = new UncertaintyInterval(
+                            startFrame,
+                            endFrame,
+                            u.reason,
+                            Mathf.Clamp01(SanitizeFinite(u.confidence)),
+                            u.recommendedAction)
+                        {
+                            PrimaryHypothesis = u.primaryHypothesis,
+                            AlternativeHypotheses = u.alternativeHypotheses ?? Array.Empty<string>(),
+                            MaxJointDisagreementMeters = u.maxJointDisagreementMeters
+                        };
+                        list.Add(interval);
+                    }
+                }
+                intervals = list.Count > 0 ? list.ToArray() : null;
+            }
+
+            // A pre-provenance motion file can still contain detectorName (or
+            // no backend fields at all).  Do not infer a successful fusion
+            // from those legacy fields; mark the provenance explicitly as
+            // legacy while retaining the original detector label for display.
+            PromoteTopLevelImageFeatureMetadata(dto);
+            bool hasModernProvenance = dto.backendMetadata != null ||
+                HasJsonField(jsonText, "backendRequested") ||
+                HasJsonField(jsonText, "backendActual") ||
+                HasJsonField(jsonText, "fusionMode") ||
+                HasJsonField(jsonText, "backendFallback") ||
+                HasJsonField(jsonText, "overlayBackend") ||
+                HasJsonField(jsonText, "overlaySource") ||
+                HasJsonField(jsonText, "officialRunnerStatus") ||
+                HasJsonField(jsonText, "hmr2ImageFeaturesStatus") ||
+                HasJsonField(jsonText, "vitpose2DStatus") ||
+                HasJsonField(jsonText, "optionalStageDiagnostics");
+            string detectorName = string.IsNullOrEmpty(dto.detectorName) ? "legacy" : dto.detectorName;
+            string backendRequested = dto.backendRequested ?? dto.backendMetadata?.backendRequested;
+            string backendActual = dto.backendActual ?? dto.backendMetadata?.backendActual;
+            string fusionMode = dto.fusionMode ?? dto.backendMetadata?.fusionMode;
+            string fallbackFrom = dto.fallbackFrom ?? dto.backendMetadata?.fallbackFrom;
+            string fallbackReason = dto.fallbackReason ?? dto.backendMetadata?.fallbackReason;
+            string officialRunnerStatus = dto.officialRunnerStatus ?? dto.backendMetadata?.officialRunnerStatus;
+            string hmr2ImageFeaturesStatus = dto.hmr2ImageFeaturesStatus ?? dto.backendMetadata?.hmr2ImageFeaturesStatus;
+            string vitPose2DStatus = dto.vitpose2DStatus ?? dto.backendMetadata?.vitpose2DStatus;
+            VideoOptionalStageDiagnostic[] optionalStageDiagnostics = ConvertOptionalStageDiagnostics(
+                dto.optionalStageDiagnostics ?? dto.backendMetadata?.optionalStageDiagnostics);
+            string overlayBackend = dto.overlayBackend ?? dto.backendMetadata?.overlayBackend;
+            string overlaySource = dto.overlaySource ?? dto.backendMetadata?.overlaySource;
+            bool backendFallback = dto.backendFallback || (dto.backendMetadata?.backendFallback ?? false);
+            if (!hasModernProvenance)
+            {
+                backendRequested = "legacy";
+                backendActual = "legacy";
+                fusionMode = "off";
+                backendFallback = false;
+                fallbackFrom = null;
+                fallbackReason = null;
+                officialRunnerStatus = null;
+                hmr2ImageFeaturesStatus = null;
+                vitPose2DStatus = null;
+                optionalStageDiagnostics = Array.Empty<VideoOptionalStageDiagnostic>();
+                overlayBackend = "legacy";
+                overlaySource = "legacy";
+            }
+            else
+            {
+                backendRequested = string.IsNullOrEmpty(backendRequested) ? detectorName : backendRequested;
+                backendActual = string.IsNullOrEmpty(backendActual) ? detectorName : backendActual;
+                fusionMode = string.IsNullOrEmpty(fusionMode) ? "off" : fusionMode;
+                overlayBackend = string.IsNullOrEmpty(overlayBackend) ? detectorName : overlayBackend;
+                overlaySource = string.IsNullOrEmpty(overlaySource) ? "backend_output" : overlaySource;
+            }
+
+            VideoBackendMetadata backendMetadata = ConvertBackendMetadata(
+                dto.backendMetadata,
+                backendRequested,
+                backendActual,
+                fusionMode,
+                backendFallback,
+                fallbackFrom,
+                fallbackReason,
+                overlayBackend,
+                overlaySource,
+                detectorName,
+                officialRunnerStatus,
+                hmr2ImageFeaturesStatus,
+                vitPose2DStatus,
+                optionalStageDiagnostics);
+
             var motionData = new VideoMotionData(
                 frames,
                 jointCount,
@@ -906,15 +1577,360 @@ namespace TexMotion.Editor.Video
                 dto.videoWidth,
                 dto.videoHeight,
                 dto.videoFps,
-                dto.overlayVideoPath
+                dto.overlayVideoPath,
+                intervals,
+                detectorName,
+                backendRequested,
+                fallbackReason,
+                backendActual,
+                fusionMode,
+                backendFallback,
+                fallbackFrom,
+                overlayBackend,
+                overlaySource,
+                backendMetadata,
+                officialRunnerStatus,
+                hmr2ImageFeaturesStatus,
+                vitPose2DStatus,
+                optionalStageDiagnostics
             );
 
             if (!motionData.Validate(out string validationError))
             {
-                Debug.LogWarning($"[TexMotion VideoJobRunner] Deserialized VideoMotionData warning: {validationError}");
+                Debug.LogWarning(TexMotionLocalization.TrFormat(
+                    TexMotionLocalization.VideoDataValidationWarning,
+                    validationError));
             }
 
             return motionData;
+        }
+
+        /// <summary>
+        /// Promotes the extractor's flat image-feature provenance into the
+        /// editor DTO without changing the runtime VideoMotionData contract.
+        /// The nested stage is retained verbatim in BackendMetadataJsonDto so
+        /// status/error code/counts remain available to the result card.
+        /// </summary>
+        private static void PromoteTopLevelImageFeatureMetadata(MotionDataJsonDto dto)
+        {
+            if (dto == null) return;
+            ImageFeatureRunnerMetadataJsonDto stage = dto.imageFeatureStage ??
+                dto.imageFeatureRunnerMetadata ?? dto.backendMetadata?.imageFeatureStage ??
+                dto.backendMetadata?.imageFeatureRunnerMetadata;
+            bool hasFlat = !string.IsNullOrWhiteSpace(dto.imageFeatureRunner) ||
+                           !string.IsNullOrWhiteSpace(dto.imageFeatureRunnerStatus) ||
+                           stage != null ||
+                           dto.imageFeatureRunnerFeatureDim > 0 ||
+                           dto.imageFeatureInputFrameCount > 0 ||
+                           dto.imageFeatureAdoptedFrameCount > 0 ||
+                           !string.IsNullOrWhiteSpace(dto.imageFeatureErrorCode) ||
+                           !string.IsNullOrWhiteSpace(dto.imageFeatureFallback);
+            if (!hasFlat) return;
+            if (dto.backendMetadata == null) dto.backendMetadata = new BackendMetadataJsonDto();
+            if (stage != null)
+            {
+                dto.backendMetadata.imageFeatureStage = stage;
+                dto.backendMetadata.imageFeatureRunnerMetadata = stage;
+            }
+            if (string.IsNullOrWhiteSpace(dto.backendMetadata.imageFeatureRunner))
+                dto.backendMetadata.imageFeatureRunner = dto.imageFeatureRunner;
+            if (string.IsNullOrWhiteSpace(dto.backendMetadata.imageFeatureRunnerStatus))
+                dto.backendMetadata.imageFeatureRunnerStatus = dto.imageFeatureRunnerStatus;
+            if (string.IsNullOrWhiteSpace(dto.backendMetadata.imageFeatureFallback))
+                dto.backendMetadata.imageFeatureFallback = dto.imageFeatureFallback;
+            if (dto.backendMetadata.imageFeatureRunnerFeatureDim <= 0)
+                dto.backendMetadata.imageFeatureRunnerFeatureDim = dto.imageFeatureRunnerFeatureDim;
+            if (dto.backendMetadata.imageFeatureInputFrameCount <= 0)
+                dto.backendMetadata.imageFeatureInputFrameCount = dto.imageFeatureInputFrameCount;
+            if (dto.backendMetadata.imageFeatureAdoptedFrameCount <= 0)
+                dto.backendMetadata.imageFeatureAdoptedFrameCount = dto.imageFeatureAdoptedFrameCount;
+            if (string.IsNullOrWhiteSpace(dto.backendMetadata.imageFeatureRequestedRunner))
+                dto.backendMetadata.imageFeatureRequestedRunner = dto.imageFeatureRequestedRunner;
+            if (string.IsNullOrWhiteSpace(dto.backendMetadata.imageFeatureStageStatus))
+                dto.backendMetadata.imageFeatureStageStatus = dto.imageFeatureStageStatus;
+            if (string.IsNullOrWhiteSpace(dto.backendMetadata.imageFeatureRuntime))
+                dto.backendMetadata.imageFeatureRuntime = dto.imageFeatureRuntime;
+            if (string.IsNullOrWhiteSpace(dto.backendMetadata.imageFeatureCheckpointPath))
+                dto.backendMetadata.imageFeatureCheckpointPath = dto.imageFeatureCheckpointPath;
+            if (string.IsNullOrWhiteSpace(dto.backendMetadata.imageFeatureCheckpointSha256))
+                dto.backendMetadata.imageFeatureCheckpointSha256 = dto.imageFeatureCheckpointSha256;
+            if (string.IsNullOrWhiteSpace(dto.backendMetadata.imageFeatureErrorCode))
+                dto.backendMetadata.imageFeatureErrorCode = dto.imageFeatureErrorCode;
+            if (string.IsNullOrWhiteSpace(dto.backendMetadata.imageFeatureNextAction))
+                dto.backendMetadata.imageFeatureNextAction = dto.imageFeatureNextAction;
+            if (dto.backendMetadata.imageFeatureInputFrameIndices == null)
+                dto.backendMetadata.imageFeatureInputFrameIndices = dto.imageFeatureInputFrameIndices;
+            if (dto.backendMetadata.imageFeatureAdoptedFrameIndices == null)
+                dto.backendMetadata.imageFeatureAdoptedFrameIndices = dto.imageFeatureAdoptedFrameIndices;
+            if (dto.imageFeatureAdoptedFrameCount > 0 && stage != null && stage.acceptedFrameCount <= 0)
+                stage.acceptedFrameCount = dto.imageFeatureAdoptedFrameCount;
+        }
+
+        private static bool HasJsonField(string json, string fieldName)
+        {
+            return !string.IsNullOrEmpty(json) && !string.IsNullOrEmpty(fieldName) &&
+                json.IndexOf($"\"{fieldName}\"", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static float SanitizeFinite(float value, float fallback = 0f)
+        {
+            return float.IsNaN(value) || float.IsInfinity(value) ? fallback : value;
+        }
+
+        private static Quaternion SanitizeQuaternion(Vector4Dto value)
+        {
+            float x = SanitizeFinite(value.x);
+            float y = SanitizeFinite(value.y);
+            float z = SanitizeFinite(value.z);
+            float w = SanitizeFinite(value.w);
+            float magnitude = Mathf.Sqrt(x * x + y * y + z * z + w * w);
+            if (magnitude < 0.00001f) return Quaternion.identity;
+            return new Quaternion(x / magnitude, y / magnitude, z / magnitude, w / magnitude);
+        }
+
+        private static Quaternion SanitizeQuaternion(Quaternion value)
+        {
+            return SanitizeQuaternion(new Vector4Dto { x = value.x, y = value.y, z = value.z, w = value.w });
+        }
+
+        private static VideoBackendMetadata ConvertBackendMetadata(
+            BackendMetadataJsonDto dto,
+            string backendRequested,
+            string backendActual,
+            string fusionMode,
+            bool backendFallback,
+            string fallbackFrom,
+            string fallbackReason,
+            string overlayBackend,
+            string overlaySource,
+            string detectorName,
+            string officialRunnerStatus,
+            string hmr2ImageFeaturesStatus,
+            string vitPose2DStatus,
+            VideoOptionalStageDiagnostic[] optionalStageDiagnostics)
+        {
+            var metadata = VideoBackendMetadata.CreateLegacy(
+                backendRequested,
+                string.IsNullOrEmpty(backendActual) ? detectorName : backendActual,
+                fusionMode,
+                backendFallback,
+                fallbackFrom,
+                fallbackReason,
+                overlayBackend,
+                overlaySource);
+            if (dto == null)
+            {
+                metadata.OfficialRunnerStatus = officialRunnerStatus;
+                metadata.Hmr2ImageFeaturesStatus = hmr2ImageFeaturesStatus;
+                metadata.VitPose2DStatus = vitPose2DStatus;
+                metadata.OptionalStageDiagnostics = optionalStageDiagnostics ??
+                    Array.Empty<VideoOptionalStageDiagnostic>();
+                return metadata;
+            }
+
+            metadata.SchemaVersion = dto.schemaVersion > 0 ? dto.schemaVersion : metadata.SchemaVersion;
+            metadata.BackendRequested = string.IsNullOrEmpty(dto.backendRequested) ? metadata.BackendRequested : dto.backendRequested;
+            metadata.BackendActual = string.IsNullOrEmpty(dto.backendActual) ? metadata.BackendActual : dto.backendActual;
+            metadata.OfficialRunnerStatus = string.IsNullOrEmpty(dto.officialRunnerStatus)
+                ? officialRunnerStatus
+                : dto.officialRunnerStatus;
+            metadata.Hmr2ImageFeaturesStatus = string.IsNullOrEmpty(dto.hmr2ImageFeaturesStatus)
+                ? hmr2ImageFeaturesStatus
+                : dto.hmr2ImageFeaturesStatus;
+            metadata.VitPose2DStatus = string.IsNullOrEmpty(dto.vitpose2DStatus)
+                ? vitPose2DStatus
+                : dto.vitpose2DStatus;
+            metadata.FusionMode = string.IsNullOrEmpty(dto.fusionMode) ? metadata.FusionMode : dto.fusionMode;
+            metadata.BackendFallback = dto.backendFallback || metadata.BackendFallback;
+            metadata.FallbackFrom = string.IsNullOrEmpty(dto.fallbackFrom) ? metadata.FallbackFrom : dto.fallbackFrom;
+            metadata.FallbackReason = string.IsNullOrEmpty(dto.fallbackReason) ? metadata.FallbackReason : dto.fallbackReason;
+            metadata.OverlayBackend = string.IsNullOrEmpty(dto.overlayBackend) ? metadata.OverlayBackend : dto.overlayBackend;
+            metadata.OverlaySource = string.IsNullOrEmpty(dto.overlaySource) ? metadata.OverlaySource : dto.overlaySource;
+            metadata.CoordinateSystem = string.IsNullOrEmpty(dto.coordinateSystem) ? metadata.CoordinateSystem : dto.coordinateSystem;
+            metadata.WorldMotionAvailable = dto.worldMotionAvailable;
+            metadata.ScaleIsRelative = dto.scaleIsRelative;
+            metadata.FusionAvailable = dto.fusionAvailable;
+            metadata.FusionError = dto.fusionError;
+            metadata.PrimaryBackend = string.IsNullOrEmpty(dto.primaryBackend) ? metadata.BackendActual : dto.primaryBackend;
+            metadata.AuxiliaryBackends = dto.auxiliaryBackends ?? Array.Empty<string>();
+            metadata.QualityFrameFallbackCount = Mathf.Max(0, dto.qualityFrameFallbackCount);
+            metadata.QualityFallbackReason = dto.qualityFallbackReason;
+            metadata.WhamAssetDiagnostic = dto.whamAssetDiagnostic;
+            metadata.WhamMissingStages = dto.whamMissingStages ?? Array.Empty<string>();
+            metadata.SelectedBackend = dto.selectedBackend;
+            metadata.BackendReady = dto.backendReady;
+            metadata.PreflightStatus = dto.preflightStatus;
+            metadata.PreflightPhase = dto.preflightPhase;
+            metadata.PreflightError = dto.preflightError;
+            metadata.PreflightFrames = Mathf.Max(0, dto.preflightFrames);
+            metadata.MissingAssets = dto.missingAssets ?? Array.Empty<string>();
+            metadata.IncompatibleAssets = dto.incompatibleAssets ?? Array.Empty<string>();
+            metadata.AssetDiagnostics = dto.assetDiagnostics ?? Array.Empty<string>();
+            metadata.MissingOptionalAssets = dto.missingOptionalAssets ?? Array.Empty<string>();
+            metadata.OptionalErrors = dto.optionalErrors ?? Array.Empty<string>();
+            metadata.OptionalStageDiagnostics = dto.optionalStageDiagnostics != null
+                ? ConvertOptionalStageDiagnostics(dto.optionalStageDiagnostics)
+                : optionalStageDiagnostics ?? Array.Empty<VideoOptionalStageDiagnostic>();
+            metadata.ImageFeaturePreprocess = dto.imageFeaturePreprocess;
+            metadata.ImageFeatureRunnerActive = dto.imageFeatureRunnerActive;
+            metadata.ImageFeatureRunnerStatus = dto.imageFeatureRunnerStatus;
+            metadata.ImageFeatureRunner = dto.imageFeatureRunner;
+            metadata.ImageFeatureRunnerModule = dto.imageFeatureRunnerModule;
+            metadata.ImageFeatureRunnerError = dto.imageFeatureRunnerError;
+            metadata.ImageFeatureFallback = dto.imageFeatureFallback;
+            metadata.ImageFeatureFallbackReason = dto.imageFeatureFallbackReason;
+            metadata.ImageFeatureFallbackConsumed = dto.imageFeatureFallbackConsumed;
+            ImageFeatureRunnerMetadataJsonDto featureStage = dto.imageFeatureStage ??
+                dto.imageFeatureRunnerMetadata;
+            if (featureStage != null)
+            {
+                if (!string.IsNullOrWhiteSpace(featureStage.runner))
+                    metadata.ImageFeatureRunner = featureStage.runner;
+                if (!string.IsNullOrWhiteSpace(featureStage.status))
+                    metadata.ImageFeatureRunnerStatus = featureStage.status;
+                if (!string.IsNullOrWhiteSpace(featureStage.error))
+                    metadata.ImageFeatureRunnerError = featureStage.error;
+                if (!string.IsNullOrWhiteSpace(featureStage.fallbackReason) &&
+                    string.IsNullOrWhiteSpace(metadata.ImageFeatureFallbackReason))
+                    metadata.ImageFeatureFallbackReason = featureStage.fallbackReason;
+            }
+            metadata.ImageFeatureRunnerFeatureDim = dto.imageFeatureRunnerFeatureDim > 0
+                ? dto.imageFeatureRunnerFeatureDim
+                : featureStage != null ? Mathf.Max(0, featureStage.featureDim) : 0;
+            metadata.ImageFeatureInputFrameCount = dto.imageFeatureInputFrameCount > 0
+                ? dto.imageFeatureInputFrameCount
+                : featureStage != null
+                    ? Mathf.Max(0, featureStage.frameCount > 0 ? featureStage.frameCount : featureStage.inputFrameCount)
+                    : (dto.imageFeatureInputFrameIndices == null ? 0 : dto.imageFeatureInputFrameIndices.Length);
+            metadata.ImageFeatureAdoptedFrameCount = dto.imageFeatureAdoptedFrameCount > 0
+                ? dto.imageFeatureAdoptedFrameCount
+                : featureStage != null
+                    ? Mathf.Max(0, featureStage.acceptedFrameCount > 0 ? featureStage.acceptedFrameCount : featureStage.adoptedFrameCount)
+                    : (dto.imageFeatureAdoptedFrameIndices == null ? 0 : dto.imageFeatureAdoptedFrameIndices.Length);
+            metadata.ImageFeatureRequestedRunner = !string.IsNullOrWhiteSpace(dto.imageFeatureRequestedRunner)
+                ? dto.imageFeatureRequestedRunner
+                : featureStage?.requestedRunner;
+            metadata.ImageFeatureStageStatus = !string.IsNullOrWhiteSpace(dto.imageFeatureStageStatus)
+                ? dto.imageFeatureStageStatus
+                : featureStage?.status;
+            metadata.ImageFeatureRuntime = !string.IsNullOrWhiteSpace(dto.imageFeatureRuntime)
+                ? dto.imageFeatureRuntime
+                : featureStage?.runtimeKind ?? featureStage?.runtime;
+            metadata.ImageFeatureCheckpointPath = !string.IsNullOrWhiteSpace(dto.imageFeatureCheckpointPath)
+                ? dto.imageFeatureCheckpointPath
+                : featureStage?.checkpointPath;
+            metadata.ImageFeatureCheckpointSha256 = !string.IsNullOrWhiteSpace(dto.imageFeatureCheckpointSha256)
+                ? dto.imageFeatureCheckpointSha256
+                : featureStage?.checkpointSha256;
+            metadata.ImageFeatureErrorCode = !string.IsNullOrWhiteSpace(dto.imageFeatureErrorCode)
+                ? dto.imageFeatureErrorCode
+                : featureStage?.errorCode;
+            metadata.ImageFeatureNextAction = !string.IsNullOrWhiteSpace(dto.imageFeatureNextAction)
+                ? dto.imageFeatureNextAction
+                : featureStage?.nextAction;
+            metadata.CameraMotionRunner = dto.cameraMotionRunner;
+            metadata.DpvoVerified = dto.dpvoVerified;
+            if (dto.cameraMotionProvenance != null)
+            {
+                metadata.CameraMotionProvenance = new VideoCameraMotionProvenance
+                {
+                    Source = dto.cameraMotionProvenance.source,
+                    Verified = dto.cameraMotionProvenance.verified,
+                    Runner = dto.cameraMotionProvenance.runner,
+                    Asset = dto.cameraMotionProvenance.asset
+                };
+            }
+            metadata.WhamPreprocessManifestPath = dto.whamPreprocessManifestPath;
+            List<string> runtimeWarnings = new List<string>(dto.runtimeWarnings ?? Array.Empty<string>());
+            if (featureStage != null)
+            {
+                string stageStatus = string.IsNullOrWhiteSpace(featureStage.status) ? "unknown" : featureStage.status;
+                string stageSummary = "Image feature stage: status=" + stageStatus;
+                if (!string.IsNullOrWhiteSpace(featureStage.runtimePath))
+                    stageSummary += ", runtime=" + featureStage.runtimePath;
+                else if (!string.IsNullOrWhiteSpace(featureStage.runtime))
+                    stageSummary += ", runtime=" + featureStage.runtime;
+                if (!string.IsNullOrWhiteSpace(featureStage.checkpointPath))
+                    stageSummary += ", checkpoint=" + featureStage.checkpointPath;
+                if (featureStage.featureDim > 0)
+                    stageSummary += string.Format(", featureDim={0}", featureStage.featureDim);
+                int stageFrameCount = featureStage.frameCount > 0
+                    ? featureStage.frameCount
+                    : featureStage.inputFrameCount;
+                int stageAcceptedFrameCount = featureStage.acceptedFrameCount > 0
+                    ? featureStage.acceptedFrameCount
+                    : featureStage.adoptedFrameCount;
+                if (stageFrameCount > 0 || stageAcceptedFrameCount > 0)
+                    stageSummary += string.Format(", acceptedFrames={0}/{1}",
+                        Mathf.Max(0, stageAcceptedFrameCount),
+                        Mathf.Max(0, stageFrameCount));
+                if (!string.IsNullOrWhiteSpace(featureStage.errorCode))
+                    stageSummary += ", errorCode=" + featureStage.errorCode;
+                if (!string.IsNullOrWhiteSpace(featureStage.error))
+                    stageSummary += ", error=" + featureStage.error;
+                if (!string.IsNullOrWhiteSpace(featureStage.nextAction))
+                    stageSummary += ", nextAction=" + featureStage.nextAction;
+                runtimeWarnings.Add(stageSummary);
+            }
+            metadata.RuntimeWarnings = runtimeWarnings.ToArray();
+            metadata.WhamFullParity = dto.whamFullParity;
+            metadata.WhamInferencePolicy = dto.whamInferencePolicy;
+            metadata.WhamMissingAssetBehavior = dto.whamMissingAssetBehavior;
+            metadata.SmplInitializationSource = dto.smplInitializationSource;
+            metadata.SmplInitializationFrame = dto.smplInitializationFrame;
+            metadata.MediapipeSeedTrackerReset = dto.mediapipeSeedTrackerReset;
+
+            if (dto.fusion != null)
+            {
+                metadata.Fusion = new VideoFusionMetadata
+                {
+                    CameraModel = string.IsNullOrEmpty(dto.fusion.cameraModel) ? "orthographic" : dto.fusion.cameraModel,
+                    WindowSeconds = dto.fusion.windowSeconds,
+                    WeightsVersion = dto.fusion.weightsVersion,
+                    MeanReprojectionError = dto.fusion.meanReprojectionError,
+                    MeanWhamCorrection = dto.fusion.meanWhamCorrection
+                };
+            }
+            metadata.Wham = ConvertBackendSourceMetadata(dto.wham);
+            metadata.MediaPipe = ConvertBackendSourceMetadata(dto.mediapipe);
+            metadata.RTMPose = ConvertBackendSourceMetadata(dto.rtmpose);
+            return metadata;
+        }
+
+        private static VideoOptionalStageDiagnostic[] ConvertOptionalStageDiagnostics(
+            OptionalStageDiagnosticJsonDto[] diagnostics)
+        {
+            if (diagnostics == null || diagnostics.Length == 0)
+                return Array.Empty<VideoOptionalStageDiagnostic>();
+
+            var result = new List<VideoOptionalStageDiagnostic>(diagnostics.Length);
+            for (int i = 0; i < diagnostics.Length; i++)
+            {
+                OptionalStageDiagnosticJsonDto dto = diagnostics[i];
+                if (dto == null || string.IsNullOrEmpty(dto.stage)) continue;
+                result.Add(new VideoOptionalStageDiagnostic
+                {
+                    Stage = dto.stage,
+                    Status = string.IsNullOrEmpty(dto.status) ? "unknown" : dto.status,
+                    Reason = dto.reason ?? string.Empty
+                });
+            }
+            return result.ToArray();
+        }
+
+        private static VideoBackendSourceMetadata ConvertBackendSourceMetadata(BackendSourceMetadataJsonDto dto)
+        {
+            if (dto == null) return null;
+            return new VideoBackendSourceMetadata
+            {
+                Implementation = dto.implementation,
+                ModelPath = dto.modelPath,
+                Checkpoint = dto.checkpoint,
+                ModelHash = dto.modelHash,
+                CoordinateSystem = dto.coordinateSystem,
+                ObservationCount = dto.observationCount,
+                Error = dto.error
+            };
         }
 
         private static Quaternion[,] ParseLocalRotationsFallback(string jsonText, int frames, int jointCount)
@@ -960,7 +1976,53 @@ namespace TexMotion.Editor.Video
                 videoWidth = ExtractInt(jsonText, "videoWidth", 0),
                 videoHeight = ExtractInt(jsonText, "videoHeight", 0),
                 videoFps = ExtractFloat(jsonText, "videoFps", 0f),
-                overlayVideoPath = ExtractString(jsonText, "overlayVideoPath", null)
+                overlayVideoPath = ExtractString(jsonText, "overlayVideoPath", null),
+                detectorName = ExtractString(jsonText, "detectorName", "mediapipe"),
+                backendRequested = ExtractString(jsonText, "backendRequested", null),
+                backendActual = ExtractString(jsonText, "backendActual", null),
+                fusionMode = ExtractString(jsonText, "fusionMode", null),
+                backendFallback = ExtractBool(jsonText, "backendFallback", false),
+                fallbackFrom = ExtractString(jsonText, "fallbackFrom", null),
+                fallbackReason = ExtractString(jsonText, "fallbackReason", null),
+                officialRunnerStatus = ExtractString(jsonText, "officialRunnerStatus", null),
+                hmr2ImageFeaturesStatus = ExtractString(jsonText, "hmr2ImageFeaturesStatus", null),
+                vitpose2DStatus = ExtractString(jsonText, "vitpose2DStatus", null),
+                imageFeatureRunner = ExtractString(jsonText, "imageFeatureRunner", null),
+                imageFeatureRunnerStatus = ExtractString(jsonText, "imageFeatureRunnerStatus", null),
+                imageFeatureRunnerFeatureDim = ExtractInt(jsonText, "imageFeatureRunnerFeatureDim", 0),
+                imageFeatureInputFrameCount = ExtractInt(jsonText, "imageFeatureInputFrameCount", 0),
+                imageFeatureAdoptedFrameCount = ExtractInt(jsonText, "imageFeatureAdoptedFrameCount", 0),
+                imageFeatureRequestedRunner = ExtractString(
+                    jsonText,
+                    "imageFeatureRequestedRunner",
+                    ExtractString(jsonText, "requestedRunner", null)),
+                imageFeatureStageStatus = ExtractString(
+                    jsonText,
+                    "imageFeatureStageStatus",
+                    ExtractString(jsonText, "status", null)),
+                imageFeatureRuntime = ExtractString(
+                    jsonText,
+                    "imageFeatureRuntime",
+                    ExtractString(jsonText, "runtimeKind", null)),
+                imageFeatureCheckpointPath = ExtractString(
+                    jsonText,
+                    "imageFeatureCheckpointPath",
+                    ExtractString(jsonText, "checkpointPath", null)),
+                imageFeatureCheckpointSha256 = ExtractString(
+                    jsonText,
+                    "imageFeatureCheckpointSha256",
+                    ExtractString(jsonText, "checkpointSha256", null)),
+                imageFeatureErrorCode = ExtractString(
+                    jsonText,
+                    "imageFeatureErrorCode",
+                    ExtractString(jsonText, "errorCode", null)),
+                imageFeatureNextAction = ExtractString(
+                    jsonText,
+                    "imageFeatureNextAction",
+                    ExtractString(jsonText, "nextAction", null)),
+                imageFeatureFallback = ExtractString(jsonText, "imageFeatureFallback", null),
+                overlayBackend = ExtractString(jsonText, "overlayBackend", null),
+                overlaySource = ExtractString(jsonText, "overlaySource", null)
             };
 
             if (dto.frames <= 0) return null;
@@ -1013,8 +2075,65 @@ namespace TexMotion.Editor.Video
             // Parse timestamps
             dto.timestamps = ExtractFloatArray(jsonText, "timestamps", dto.frames);
             dto.confidences = ExtractFloatArray(jsonText, "confidences", dto.frames);
+            dto.optionalStageDiagnostics = ParseOptionalStageDiagnosticsFallback(jsonText);
+
+            // Parse uncertaintyIntervals
+            int uncStart = jsonText.IndexOf("\"uncertaintyIntervals\"", StringComparison.OrdinalIgnoreCase);
+            if (uncStart >= 0)
+            {
+                var uncMatches = Regex.Matches(
+                    jsonText.Substring(uncStart),
+                    @"\{[^{}]*""startFrame""\s*:\s*(\d+)[^{}]*""endFrame""\s*:\s*(\d+)[^{}]*""reason""\s*:\s*""([^""]*)""[^{}]*""confidence""\s*:\s*([-\d\.eE]+)[^{}]*\}"
+                );
+                if (uncMatches.Count > 0)
+                {
+                    dto.uncertaintyIntervals = new UncertaintyIntervalJsonDto[uncMatches.Count];
+                    for (int i = 0; i < uncMatches.Count; i++)
+                    {
+                        var m = uncMatches[i];
+                        var actMatch = Regex.Match(m.Value, @"""recommendedAction""\s*:\s*""([^""]*)""");
+                        dto.uncertaintyIntervals[i] = new UncertaintyIntervalJsonDto
+                        {
+                            startFrame = int.Parse(m.Groups[1].Value),
+                            endFrame = int.Parse(m.Groups[2].Value),
+                            reason = m.Groups[3].Value,
+                            confidence = float.Parse(m.Groups[4].Value, CultureInfo.InvariantCulture),
+                            recommendedAction = actMatch.Success ? actMatch.Groups[1].Value : ""
+                        };
+                    }
+                }
+            }
 
             return dto;
+        }
+
+        private static OptionalStageDiagnosticJsonDto[] ParseOptionalStageDiagnosticsFallback(string jsonText)
+        {
+            if (string.IsNullOrEmpty(jsonText)) return null;
+            int diagnosticsStart = jsonText.IndexOf("\"optionalStageDiagnostics\"", StringComparison.OrdinalIgnoreCase);
+            if (diagnosticsStart < 0) return null;
+            int arrayStart = jsonText.IndexOf('[', diagnosticsStart);
+            if (arrayStart < 0) return null;
+            int arrayEnd = jsonText.IndexOf(']', arrayStart);
+            if (arrayEnd < 0) return null;
+
+            string payload = jsonText.Substring(arrayStart, arrayEnd - arrayStart + 1);
+            var matches = Regex.Matches(payload, @"\{[^{}]*\}");
+            if (matches.Count == 0) return null;
+            var result = new List<OptionalStageDiagnosticJsonDto>();
+            for (int i = 0; i < matches.Count; i++)
+            {
+                string item = matches[i].Value;
+                string stage = ExtractString(item, "stage", null);
+                if (string.IsNullOrEmpty(stage)) continue;
+                result.Add(new OptionalStageDiagnosticJsonDto
+                {
+                    stage = stage,
+                    status = ExtractString(item, "status", "unknown"),
+                    reason = ExtractString(item, "reason", string.Empty)
+                });
+            }
+            return result.Count > 0 ? result.ToArray() : null;
         }
 
         private static float[] ExtractFloatArray(string json, string key, int maxCount)
@@ -1085,9 +2204,199 @@ namespace TexMotion.Editor.Video
             public int videoHeight;
             public float videoFps;
             public string overlayVideoPath;
+            public string detectorName;
+            public string backendRequested;
+            public string backendActual;
+            public string fusionMode;
+            public bool backendFallback;
+            public string fallbackFrom;
+            public string fallbackReason;
+            public string officialRunnerStatus;
+            public string hmr2ImageFeaturesStatus;
+            public string vitpose2DStatus;
+            // Flat image-feature provenance is emitted alongside the nested
+            // backend metadata so old result consumers can still display the
+            // selected runner without knowing adapter-specific payloads.
+            public string imageFeatureRunner;
+            public string imageFeatureRunnerStatus;
+            public int imageFeatureRunnerFeatureDim;
+            public int imageFeatureInputFrameCount;
+            public int imageFeatureAdoptedFrameCount;
+            public string imageFeatureRequestedRunner;
+            public string imageFeatureStageStatus;
+            public string imageFeatureRuntime;
+            public string imageFeatureCheckpointPath;
+            public string imageFeatureCheckpointSha256;
+            public string imageFeatureErrorCode;
+            public string imageFeatureNextAction;
+            public ImageFeatureRunnerMetadataJsonDto imageFeatureStage;
+            public ImageFeatureRunnerMetadataJsonDto imageFeatureRunnerMetadata;
+            public int[] imageFeatureInputFrameIndices;
+            public int[] imageFeatureAdoptedFrameIndices;
+            public string imageFeatureFallback;
+            public string overlayBackend;
+            public string overlaySource;
             public bool inPlace;
             public bool smoothed;
             public bool footLocking;
+            public UncertaintyIntervalJsonDto[] uncertaintyIntervals;
+            public OptionalStageDiagnosticJsonDto[] optionalStageDiagnostics;
+            public BackendMetadataJsonDto backendMetadata;
+        }
+
+        [Serializable]
+        private class UncertaintyIntervalJsonDto
+        {
+            public int startFrame;
+            public int endFrame;
+            public string reason;
+            public float confidence;
+            public string recommendedAction;
+            public string primaryHypothesis;
+            public string[] alternativeHypotheses;
+            public float maxJointDisagreementMeters;
+        }
+
+        [Serializable]
+        private class OptionalStageDiagnosticJsonDto
+        {
+            public string stage;
+            public string status;
+            public string reason;
+        }
+
+        [Serializable]
+        private class BackendMetadataJsonDto
+        {
+            public int schemaVersion;
+            public string backendRequested;
+            public string backendActual;
+            public string fusionMode;
+            public bool backendFallback;
+            public string fallbackFrom;
+            public string fallbackReason;
+            public string officialRunnerStatus;
+            public string hmr2ImageFeaturesStatus;
+            public string vitpose2DStatus;
+            public string overlayBackend;
+            public string overlaySource;
+            public string coordinateSystem;
+            public bool worldMotionAvailable;
+            public bool scaleIsRelative = true;
+            public bool fusionAvailable;
+            public string fusionError;
+            public string primaryBackend;
+            public string[] auxiliaryBackends;
+            public int qualityFrameFallbackCount;
+            public string qualityFallbackReason;
+            public string whamAssetDiagnostic;
+            public string[] whamMissingStages;
+            public string selectedBackend;
+            public bool backendReady;
+            public string preflightStatus;
+            public string preflightPhase;
+            public string preflightError;
+            public int preflightFrames;
+            public string[] missingAssets;
+            public string[] incompatibleAssets;
+            public string[] assetDiagnostics;
+            public string[] missingOptionalAssets;
+            public string[] optionalErrors;
+            public OptionalStageDiagnosticJsonDto[] optionalStageDiagnostics;
+            public string imageFeaturePreprocess;
+            public bool imageFeatureRunnerActive;
+            public string imageFeatureRunnerStatus;
+            public string imageFeatureRunner;
+            public string imageFeatureRunnerModule;
+            public int imageFeatureRunnerFeatureDim;
+            public int imageFeatureInputFrameCount;
+            public int imageFeatureAdoptedFrameCount;
+            public string imageFeatureRequestedRunner;
+            public string imageFeatureStageStatus;
+            public string imageFeatureRuntime;
+            public string imageFeatureCheckpointPath;
+            public string imageFeatureCheckpointSha256;
+            public string imageFeatureErrorCode;
+            public string imageFeatureNextAction;
+            public int[] imageFeatureInputFrameIndices;
+            public int[] imageFeatureAdoptedFrameIndices;
+            public string imageFeatureRunnerError;
+            public string imageFeatureFallback;
+            public string imageFeatureFallbackReason;
+            public bool imageFeatureFallbackConsumed;
+            public ImageFeatureRunnerMetadataJsonDto imageFeatureStage;
+            public ImageFeatureRunnerMetadataJsonDto imageFeatureRunnerMetadata;
+            public string cameraMotionRunner;
+            public bool dpvoVerified;
+            public CameraMotionProvenanceJsonDto cameraMotionProvenance;
+            public string whamPreprocessManifestPath;
+            public string[] runtimeWarnings;
+            public bool whamFullParity;
+            public string whamInferencePolicy;
+            public string whamMissingAssetBehavior;
+            public string smplInitializationSource;
+            public int smplInitializationFrame = -1;
+            public bool mediapipeSeedTrackerReset;
+            public VideoFusionMetadataJsonDto fusion;
+            public BackendSourceMetadataJsonDto wham;
+            public BackendSourceMetadataJsonDto mediapipe;
+            public BackendSourceMetadataJsonDto rtmpose;
+        }
+
+        [Serializable]
+        private class ImageFeatureRunnerMetadataJsonDto
+        {
+            public string requestedRunner;
+            public string runner;
+            public string status;
+            public string runtime;
+            public string runtimeKind;
+            public string runtimePath;
+            public string checkpointPath;
+            public string checkpointSha256;
+            public int featureDim;
+            public int frameCount;
+            public int inputFrameCount;
+            public int acceptedFrameCount;
+            public int adoptedFrameCount;
+            public string modelFactory;
+            public string errorCode;
+            public string error;
+            public string fallbackReason;
+            public string nextAction;
+            public int[] inputFrameIndices;
+            public int[] adoptedFrameIndices;
+        }
+
+        [Serializable]
+        private class VideoFusionMetadataJsonDto
+        {
+            public string cameraModel;
+            public float windowSeconds;
+            public int weightsVersion;
+            public float meanReprojectionError;
+            public float meanWhamCorrection;
+        }
+
+        [Serializable]
+        private class BackendSourceMetadataJsonDto
+        {
+            public string implementation;
+            public string modelPath;
+            public string checkpoint;
+            public string modelHash;
+            public string coordinateSystem;
+            public int observationCount;
+            public string error;
+        }
+
+        [Serializable]
+        private class CameraMotionProvenanceJsonDto
+        {
+            public string source;
+            public bool verified;
+            public string runner;
+            public string asset;
         }
 
         [Serializable]
@@ -1139,16 +2448,15 @@ namespace TexMotion.Editor.Video
 
             if (bestFallback != null)
             {
-                bestFallback.ErrorMessage =
-                    "Python runtime was found, but required video dependencies (mediapipe, opencv-python) are missing. " +
-                    "Run requirements installation to enable full pose extraction.";
+                bestFallback.ErrorMessage = TexMotionLocalization.Tr(
+                    TexMotionLocalization.RuntimeDependenciesMissing);
                 return bestFallback;
             }
 
             return new PythonRuntimeInfo
             {
                 IsAvailable = false,
-                ErrorMessage = "No Python runtime detected on system. Please install Python 3.10+ (with mediapipe and opencv-python)."
+                ErrorMessage = TexMotionLocalization.Tr(TexMotionLocalization.NoPythonRuntimeDetected)
             };
         }
 
@@ -1177,7 +2485,7 @@ namespace TexMotion.Editor.Video
             // 2. TexMotionSettings stored preference
             try
             {
-                string settingsPath = TexMotionSettings.instance?.CustomPythonExecutablePath;
+                string settingsPath = TexMotionSettings.instance?.GetEffectiveVideoPythonExecutablePath();
                 if (!string.IsNullOrEmpty(settingsPath) && !paths.Contains(settingsPath))
                 {
                     paths.Add(settingsPath);
@@ -1200,7 +2508,8 @@ namespace TexMotion.Editor.Video
                 if (File.Exists(condaPy) && !paths.Contains(condaPy)) paths.Add(condaPy);
             }
 
-            // 4. Project-local virtual environments (.venv, venv, env, TexMotion-venv)
+            // 4. Project-local virtual environments (.texmotion-venv, .venv,
+            // venv, env, TexMotion-venv)
             var searchRoots = new List<string> { Directory.GetCurrentDirectory() };
             string dataPath = SafeGetDataPath();
             if (!string.IsNullOrEmpty(dataPath))
@@ -1210,7 +2519,7 @@ namespace TexMotion.Editor.Video
                 if (!string.IsNullOrEmpty(parent)) searchRoots.Add(parent);
             }
 
-            string[] venvFolderNames = new[] { ".venv", "venv", "env", "TexMotion-venv" };
+            string[] venvFolderNames = new[] { ".texmotion-venv", ".venv", "venv", "env", "TexMotion-venv" };
             foreach (var root in searchRoots)
             {
                 if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) continue;
@@ -1227,6 +2536,18 @@ namespace TexMotion.Editor.Video
                     if (File.Exists(pyUnix) && !paths.Contains(pyUnix)) paths.Add(pyUnix);
                 }
             }
+
+            // Keep the uv-managed project environment discoverable even when Unity's
+            // current working directory is the package cache rather than the project
+            // root. This also preserves the legacy venv/conda/PATH candidates below.
+            try
+            {
+                foreach (string localPython in PythonEnvironmentManager.FindLocalPythonPaths())
+                {
+                    if (!string.IsNullOrEmpty(localPython) && !paths.Contains(localPython)) paths.Add(localPython);
+                }
+            }
+            catch { }
 
             // 5. System PATH commands & standard installation folders
             if (IsWindowsPlatform)
@@ -1290,7 +2611,7 @@ namespace TexMotion.Editor.Video
             if (string.IsNullOrEmpty(pythonExe))
             {
                 info.IsAvailable = false;
-                info.ErrorMessage = "Python executable path is null or empty.";
+                info.ErrorMessage = TexMotionLocalization.Tr(TexMotionLocalization.PythonExecutablePathEmpty);
                 return info;
             }
 
@@ -1300,28 +2621,55 @@ namespace TexMotion.Editor.Video
                 if (!File.Exists(pythonExe))
                 {
                     info.IsAvailable = false;
-                    info.ErrorMessage = $"File not found: {pythonExe}";
+                    info.ErrorMessage = TexMotionLocalization.TrFormat(
+                        TexMotionLocalization.PythonFileNotFound,
+                        pythonExe);
                     return info;
                 }
             }
 
-            string probeScript =
-                "import sys, json, importlib.util; " +
-                "print(json.dumps({" +
-                "'version': sys.version.split()[0], " +
-                "'executable': sys.executable, " +
-                "'prefix': sys.prefix, " +
-                "'is_venv': sys.prefix != getattr(sys, 'base_prefix', sys.prefix), " +
-                "'mp': bool(importlib.util.find_spec('mediapipe')), " +
-                "'cv': bool(importlib.util.find_spec('cv2')), " +
-                "'np': bool(importlib.util.find_spec('numpy')), " +
-                "'sp': bool(importlib.util.find_spec('scipy'))" +
-                "}))";
+            // Base64 encoded probe script to avoid escaping/multiline SyntaxError across platforms:
+            // import sys, json, importlib.util
+            // torch_spec = bool(importlib.util.find_spec('torch'))
+            // cuda_avail = False
+            // if torch_spec:
+            //     try:
+            //         import torch
+            //         cuda_avail = bool(torch.cuda.is_available())
+            //     except Exception:
+            //         pass
+            // print(json.dumps({
+            //     'version': sys.version.split()[0],
+            //     'executable': sys.executable,
+            //     'prefix': sys.prefix,
+            //     'is_venv': sys.prefix != getattr(sys, 'base_prefix', sys.prefix),
+            //     'mp': bool(importlib.util.find_spec('mediapipe')),
+            //     'cv': bool(importlib.util.find_spec('cv2')),
+            //     'np': bool(importlib.util.find_spec('numpy')),
+            //     'sp': bool(importlib.util.find_spec('scipy')),
+            //     'ort': bool(importlib.util.find_spec('onnxruntime')),
+            //     'torch': torch_spec,
+            //     'cuda': cuda_avail
+            // }))
+            const string probeScriptB64 =
+                "aW1wb3J0IHN5cywganNvbiwgaW1wb3J0bGliLnV0aWwKdG9yY2hfc3BlYyA9IGJvb2woaW1wb3J0" +
+                "bGliLnV0aWwuZmluZF9zcGVjKCd0b3JjaCcpKQpjdWRhX2F2YWlsID0gRmFsc2UKaWYgdG9yY2hf" +
+                "c3BlYzoKICAgIHRyeToKICAgICAgICBpbXBvcnQgdG9yY2gKICAgICAgICBjdWRhX2F2YWlsID0g" +
+                "Ym9vbCh0b3JjaC5jdWRhLmlzX2F2YWlsYWJsZSgpKQogICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAg" +
+                "ICAgICBwYXNzCnByaW50KGpzb24uZHVtcHMoewogICAgJ3ZlcnNpb24nOiBzeXMudmVyc2lvbi5z" +
+                "cGxpdCgpWzBdLAogICAgJ2V4ZWN1dGFibGUnOiBzeXMuZXhlY3V0YWJsZSwKICAgICdwcmVmaXgn" +
+                "OiBzeXMucHJlZml4LAogICAgJ2lzX3ZlbnYnOiBzeXMucHJlZml4ICE9IGdldGF0dHIoc3lzLCAn" +
+                "YmFzZV9wcmVmaXgnLCBzeXMucHJlZml4KSwKICAgICdtcCc6IGJvb2woaW1wb3J0bGliLnV0aWwu" +
+                "ZmluZF9zcGVjKCdtZWRpYXBpcGUnKSksCiAgICAnY3YnOiBib29sKGltcG9ydGxpYi51dGlsLmZp" +
+                "bmRfc3BlYygnY3YyJykpLAogICAgJ25wJzogYm9vbChpbXBvcnRsaWIudXRpbC5maW5kX3NwZWMo" +
+                "J251bXB5JykpLAogICAgJ3NwJzogYm9vbChpbXBvcnRsaWIudXRpbC5maW5kX3NwZWMoJ3NjaXB5" +
+                "JykpLAogICAgJ29ydCc6IGJvb2woaW1wb3J0bGliLnV0aWwuZmluZF9zcGVjKCdvbm54cnVudGlt" +
+                "ZScpKSwKICAgICd0b3JjaCc6IHRvcmNoX3NwZWMsCiAgICAnY3VkYSc6IGN1ZGFfYXZhaWwKfSkp";
 
             var psi = new ProcessStartInfo
             {
                 FileName = pythonExe,
-                Arguments = $"-c \"{probeScript}\"",
+                Arguments = $"-c \"import base64; exec(base64.b64decode('{probeScriptB64}'))\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -1336,7 +2684,7 @@ namespace TexMotion.Editor.Video
                 if (process == null)
                 {
                     info.IsAvailable = false;
-                    info.ErrorMessage = "Failed to launch Python process.";
+                    info.ErrorMessage = TexMotionLocalization.Tr(TexMotionLocalization.PythonProcessLaunchFailed);
                     return info;
                 }
 
@@ -1347,14 +2695,17 @@ namespace TexMotion.Editor.Video
                 {
                     KillProcessTree(process);
                     info.IsAvailable = false;
-                    info.ErrorMessage = "Python probe execution timed out.";
+                    info.ErrorMessage = TexMotionLocalization.Tr(TexMotionLocalization.PythonProbeTimedOut);
                     return info;
                 }
 
                 if (process.ExitCode != 0)
                 {
                     info.IsAvailable = false;
-                    info.ErrorMessage = $"Python process exited with code {process.ExitCode}: {stderr}";
+                    info.ErrorMessage = TexMotionLocalization.TrFormat(
+                        TexMotionLocalization.PythonProcessExited,
+                        process.ExitCode,
+                        stderr);
                     return info;
                 }
 
@@ -1381,6 +2732,9 @@ namespace TexMotion.Editor.Video
                         info.HasOpenCV = probeDto.cv;
                         info.HasNumPy = probeDto.np;
                         info.HasSciPy = probeDto.sp;
+                        info.HasOnnxRuntime = probeDto.ort;
+                        info.HasTorch = probeDto.torch;
+                        info.HasCuda = probeDto.cuda;
                         return info;
                     }
 
@@ -1394,11 +2748,14 @@ namespace TexMotion.Editor.Video
                     info.HasOpenCV = jsonLine.Contains("\"cv\": true");
                     info.HasNumPy = jsonLine.Contains("\"np\": true");
                     info.HasSciPy = jsonLine.Contains("\"sp\": true");
+                    info.HasOnnxRuntime = jsonLine.Contains("\"ort\": true");
+                    info.HasTorch = jsonLine.Contains("\"torch\": true");
+                    info.HasCuda = jsonLine.Contains("\"cuda\": true");
                     return info;
                 }
 
                 info.IsAvailable = true;
-                info.Version = "Unknown";
+                info.Version = TexMotionLocalization.Tr(TexMotionLocalization.Unknown);
                 return info;
             }
             catch (Exception ex)
@@ -1421,6 +2778,9 @@ namespace TexMotion.Editor.Video
             public bool cv;
             public bool np;
             public bool sp;
+            public bool ort;
+            public bool torch;
+            public bool cuda;
         }
 #pragma warning restore CS0649
 
@@ -1439,7 +2799,8 @@ namespace TexMotion.Editor.Video
                 var runtime = DetectPythonRuntime();
                 if (!runtime.IsAvailable)
                 {
-                    throw new InvalidOperationException("Cannot install requirements: No Python executable detected.");
+                    throw new InvalidOperationException(TexMotionLocalization.Tr(
+                        TexMotionLocalization.RequirementsPythonMissing));
                 }
                 pythonExe = runtime.ExecutablePath;
             }
@@ -1500,7 +2861,9 @@ namespace TexMotion.Editor.Video
                 progress?.Report(0.1f);
                 if (!process.Start())
                 {
-                    throw new InvalidOperationException($"Failed to launch pip process with {pythonExe}");
+                    throw new InvalidOperationException(TexMotionLocalization.TrFormat(
+                        TexMotionLocalization.PipProcessLaunchFailed,
+                        pythonExe));
                 }
 
                 process.BeginOutputReadLine();
@@ -1650,7 +3013,9 @@ namespace TexMotion.Editor.Video
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[TexMotion VideoJobRunner] Notice while terminating process: {ex.Message}");
+                Debug.LogWarning(TexMotionLocalization.TrFormat(
+                    TexMotionLocalization.ProcessTerminationWarning,
+                    ex.Message));
             }
         }
 

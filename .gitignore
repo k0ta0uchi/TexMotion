@@ -37,10 +37,27 @@ Thumbs.db
 
 # Python runtime & byte-code
 __pycache__/
+**/__pycache__/
 *.py[cod]
+**/*.py[cod]
 *$py.class
 *.pyc.meta
+**/*.pyc.meta
 __pycache__.meta
+**/__pycache__.meta
+.pytest_cache/
+**/.pytest_cache/
+**/.pytest_cache.meta
+.texmotion-venv/
+.texmotion-uv-cache/
+
+# Cache, feature archives & numpy dumps
+*.npz
+*.npz.meta
+*.npy
+*.npy.meta
+*.pkl
+*.pkl.meta
 
 # Media & Video files (Do not commit test/input/output videos into git)
 *.mp4
@@ -73,5 +90,22 @@ pose_extraction_*.md.meta
 
 # Large downloaded model files (models should be downloaded via UI)
 *.gguf
+*.gguf.meta
 *.bin
+*.bin.meta
+*.onnx
+*.onnx.meta
+*.task
+*.task.meta
+*.pt
+*.pt.meta
+*.pth
+*.pth.meta
+*.ckpt
+*.ckpt.meta
+*.tar
+*.tar.meta
 llm2vec-text-bundle/
+
+# Release packages
+# *.unitypackage (kept tracked in repo root for convenience)

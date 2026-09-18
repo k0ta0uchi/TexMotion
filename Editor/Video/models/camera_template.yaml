@@ -1,0 +1,8 @@
+# TexMotion WHAM camera calibration template.
+# Replace fx/fy/cx/cy with the intrinsics for the input video before running
+# an external DPVO/SLAM runner.  Calibration alone does not provide motion;
+# exported per-frame poses can be saved as camera_poses.npy or slam_results.npz.
+fx: 0
+fy: 0
+cx: 0
+cy: 0

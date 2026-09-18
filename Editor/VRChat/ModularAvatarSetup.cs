@@ -62,14 +62,21 @@ namespace TexMotion.Editor.VRChat
 
                 if (_installRequest.Status == StatusCode.Success)
                 {
-                    Debug.Log("[TexMotion] Modular Avatar installed successfully!");
-                    EditorUtility.DisplayDialog("Modular Avatar Installed", "Modular Avatar was successfully installed into your project! You can now apply animations non-destructively.", "OK");
+                    Debug.Log(TexMotionLocalization.Tr(TexMotionLocalization.ModularAvatarInstalled));
+                    EditorUtility.DisplayDialog(
+                        TexMotionLocalization.Tr(TexMotionLocalization.ModularAvatarInstalled),
+                        TexMotionLocalization.Tr(TexMotionLocalization.ModularAvatarInstalledMessage),
+                        TexMotionLocalization.Tr(TexMotionLocalization.Ok));
                     _onInstallComplete?.Invoke();
                 }
                 else
                 {
-                    Debug.LogError($"[TexMotion] Failed to install Modular Avatar: {_installRequest.Error.message}");
-                    EditorUtility.DisplayDialog("Installation Failed", $"Could not install Modular Avatar automatically:\n{_installRequest.Error.message}\n\nPlease install Modular Avatar via VCC (VRChat Creator Companion).", "OK");
+                    string error = _installRequest.Error != null ? _installRequest.Error.message : string.Empty;
+                    Debug.LogError(TexMotionLocalization.TrFormat(TexMotionLocalization.InstallationFailedMessage, error));
+                    EditorUtility.DisplayDialog(
+                        TexMotionLocalization.Tr(TexMotionLocalization.InstallationFailed),
+                        TexMotionLocalization.TrFormat(TexMotionLocalization.InstallationFailedMessage, error),
+                        TexMotionLocalization.Tr(TexMotionLocalization.Ok));
                 }
 
                 _installRequest = null;

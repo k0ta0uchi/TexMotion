@@ -1,0 +1,118 @@
+{
+  "contractVersion": 1,
+  "backend": "wham",
+  "offline": true,
+  "description": "Local-only WHAM full-stage asset contract. Paths are resolved relative to this manifest or the configured Video2Motion model directory.",
+  "assets": [
+    {
+      "id": "checkpoint",
+      "role": "checkpoint",
+      "fileName": "wham_vit_w_3dpw.pth.tar",
+      "requiredForNative": true,
+      "requiredForFullParity": true,
+      "minimumBytes": 16777216,
+      "source": "https://github.com/yohanshin/WHAM",
+      "provisioning": "download-or-user-provided",
+      "license": "WHAM checkpoint terms must be reviewed separately from repository source terms."
+    },
+    {
+      "id": "smplx-body-model",
+      "role": "body_model",
+      "fileName": "SMPLX_NEUTRAL.npz",
+      "aliases": [
+        "smplx/SMPLX_NEUTRAL.npz",
+        "smplx_neutral.npz",
+        "SMPL_NEUTRAL.pkl"
+      ],
+      "requiredForNative": false,
+      "requiredForFullParity": true,
+      "minimumBytes": 1,
+      "source": "https://smpl-x.is.tue.mpg.de/",
+      "provisioning": "manual-user-provided",
+      "license": "SMPL/SMPL-X body-model assets are separately licensed and are not redistributed by TexMotion."
+    },
+    {
+      "id": "image-feature-backbone",
+      "role": "image_feature_backbone",
+      "fileName": "vitpose-huge.pth",
+      "aliases": [
+        "vitpose_huge.pth",
+        "vitpose-huge.pth.tar",
+        "image_feature_backbone.pth"
+      ],
+      "requiredForNative": false,
+      "requiredForFullParity": true,
+      "minimumBytes": 1,
+      "source": "https://github.com/ViTAE-Transformer/ViTPose",
+      "downloadUrl": "https://huggingface.co/nielsr/vitpose-original-checkpoints/resolve/main/vitpose%2B_huge.pth?download=true",
+      "provisioning": "downloadable-via-settings-or-user-provided",
+      "license": "Use the image-feature checkpoint under its upstream terms; no checkpoint is bundled."
+    },
+    {
+      "id": "image-feature-model-definition",
+      "role": "image_feature_model_definition",
+      "fileName": "wham_vitpose_model_definition.py",
+      "requiredForNative": false,
+      "requiredForFullParity": true,
+      "minimumBytes": 1,
+      "source": "https://github.com/ViTAE-Transformer/ViTPose",
+      "provisioning": "bundled-contract-or-user-provided-compatible-factory",
+      "license": "The bundled file is only a contract template; use a compatible ViTPose/MMPose/Transformers model factory under its upstream terms."
+    },
+    {
+      "id": "image-feature-config",
+      "role": "image_feature_config",
+      "fileName": "wham_vitpose_runner_config.json",
+      "requiredForNative": false,
+      "requiredForFullParity": true,
+      "minimumBytes": 1,
+      "source": "https://github.com/ViTAE-Transformer/ViTPose",
+      "provisioning": "bundled-contract-or-user-provided",
+      "license": "Runner configuration must match the selected ViTPose model definition."
+    },
+    {
+      "id": "camera-model",
+      "role": "camera",
+      "fileName": "camera.yaml",
+      "aliases": [
+        "camera.yml",
+        "camera_config.yaml",
+        "camera_config.json"
+      ],
+      "requiredForNative": false,
+      "requiredForFullParity": true,
+      "minimumBytes": 1,
+      "source": "https://github.com/yohanshin/WHAM",
+      "provisioning": "bundled-template-or-calibrated-user-provided",
+      "license": "Camera calibration/configuration is an external full-pipeline input."
+    },
+    {
+      "id": "dpvo-checkpoint",
+      "role": "dpvo",
+      "fileName": "dpvo.pth",
+      "aliases": [
+        "dpvo.pth.tar",
+        "dpvo_model.pth",
+        "dpvo.ckpt"
+      ],
+      "requiredForNative": false,
+      "requiredForFullParity": true,
+      "minimumBytes": 1,
+      "source": "https://github.com/princeton-vl/DPVO",
+      "downloadUrl": "https://huggingface.co/pablovela5620/dpvo/resolve/main/dpvo.pth?download=true",
+      "provisioning": "downloadable-via-settings-or-user-provided",
+      "license": "DPVO weights and compiled runtime dependencies are external full-pipeline inputs."
+    },
+    {
+      "id": "texmotion-adapter",
+      "role": "adapter",
+      "fileName": "texmotion_wham_adapter.py",
+      "requiredForNative": true,
+      "requiredForFullParity": true,
+      "minimumBytes": 1,
+      "source": "package",
+      "provisioning": "bundled-or-explicit-user-adapter",
+      "license": "TexMotion adapter bridge; external implementation modules retain their own terms."
+    }
+  ]
+}

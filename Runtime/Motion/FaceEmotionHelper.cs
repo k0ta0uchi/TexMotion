@@ -108,7 +108,15 @@ namespace TexMotion.Runtime.Motion
             switch (emotion)
             {
                 case FaceEmotionType.Smile:
-                    return new string[] { "smile", "joy", "happy", "笑", "にこり", "喜" };
+                    // Cover common VRChat/VRM, ARKit and Blender naming schemes.
+                    // VRM avatars frequently expose the preset as Fcl_MTH_S or
+                    // Fcl_ALL_Joy rather than a literal "smile" key.
+                    return new string[]
+                    {
+                        "smile", "joy", "happy", "笑", "にこり", "喜",
+                        "mouth_smile", "mouthsmile", "mouthsmileleft", "mouthsmileright",
+                        "lip_corner", "lipcorner", "fcl_mth_s", "fcl_mth_smile", "fcl_all_joy"
+                    };
 
                 case FaceEmotionType.Wink:
                     return new string[] { "wink", "ウィンク", "eye_blink_l", "blink_l" };

@@ -1,0 +1,7 @@
+{
+  "runner": "pose_pipeline.vitpose_runner",
+  "input_size": [256, 192],
+  "color_order": "rgb",
+  "feature_method": "forward",
+  "notes": "This is a contract template. A compatible ViTPose/HMR2 model definition or factory is still required for a raw .pth checkpoint. TexMotion reports the exact runner error, rejects unverified local descriptors, and skips the learned WHAM image-feature integrator until a compatible runner or verified feature archive is installed."
+}

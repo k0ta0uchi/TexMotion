@@ -569,7 +569,18 @@ namespace TexMotion.Editor.Motion
                     SourceVideoData.VideoWidth,
                     SourceVideoData.VideoHeight,
                     SourceVideoData.VideoFps,
-                    SourceVideoData.OverlayVideoPath
+                    SourceVideoData.OverlayVideoPath,
+                    SourceVideoData.UncertaintyIntervals != null ? (UncertaintyInterval[])SourceVideoData.UncertaintyIntervals.Clone() : null,
+                    detectorName: SourceVideoData.DetectorName,
+                    backendRequested: SourceVideoData.BackendRequested,
+                    backendFallbackReason: SourceVideoData.BackendFallbackReason,
+                    backendActual: SourceVideoData.BackendActual,
+                    fusionMode: SourceVideoData.FusionMode,
+                    backendFallback: SourceVideoData.BackendFallback,
+                    fallbackFrom: SourceVideoData.FallbackFrom,
+                    overlayBackend: SourceVideoData.OverlayBackend,
+                    overlaySource: SourceVideoData.OverlaySource,
+                    backendMetadata: SourceVideoData.BackendMetadata
                 );
             }
 
@@ -589,6 +600,167 @@ namespace TexMotion.Editor.Motion
         {
             GeneratedMotionData data = ToGeneratedMotionData();
             return AnimationClipBuilder.BuildAnimationClip(data, options);
+        }
+
+        #endregion
+
+        #region Occlusion & Ambiguity Operations (Phases 3-4)
+
+        public UncertaintyInterval[] UncertaintyIntervals => SourceVideoData?.UncertaintyIntervals ?? Array.Empty<UncertaintyInterval>();
+
+        /// <summary>
+        /// Returns true if the frame is part of an uncertainty or occlusion interval.
+        /// </summary>
+        public bool HasUncertainty(int frame, out UncertaintyInterval interval)
+        {
+            interval = null;
+            if (SourceVideoData == null) return false;
+            return SourceVideoData.HasUncertainty(frame, out interval);
+        }
+
+        /// <summary>
+        /// Returns true if the frame is part of an uncertainty or occlusion interval, returning the reason string.
+        /// </summary>
+        public bool HasUncertainty(int frame, out string reason)
+        {
+            if (HasUncertainty(frame, out UncertaintyInterval interval) && interval != null)
+            {
+                reason = interval.Reason ?? string.Empty;
+                return true;
+            }
+            reason = string.Empty;
+            return false;
+        }
+
+        /// <summary>
+        /// Reverses the anterior-posterior (crossing) order between left and right legs across a range of frames.
+        /// If left leg was in front, moves right leg in front, and vice versa.
+        /// </summary>
+        public void SwapLegCrossing(int startFrame, int endFrame)
+        {
+            if (startFrame < 0) startFrame = 0;
+            if (endFrame >= Frames) endFrame = Frames - 1;
+            if (startFrame > endFrame) return;
+
+            RecordUndo($"Swap Leg Crossing (Frames {startFrame}-{endFrame})");
+
+            int lHip = (int)SmplxJoint.L_Hip;
+            int rHip = (int)SmplxJoint.R_Hip;
+            int lKnee = (int)SmplxJoint.L_Knee;
+            int rKnee = (int)SmplxJoint.R_Knee;
+            int lAnkle = (int)SmplxJoint.L_Ankle;
+            int rAnkle = (int)SmplxJoint.R_Ankle;
+
+            for (int t = startFrame; t <= endFrame; t++)
+            {
+                // Invert the sagittal flexion (pitch) and adduction (roll) of hips
+                Quaternion qLHip = LocalRotations[t, lHip];
+                Quaternion qRHip = LocalRotations[t, rHip];
+
+                Vector3 eulerL = qLHip.eulerAngles;
+                Vector3 eulerR = qRHip.eulerAngles;
+
+                // Adjust pitch angle (X)
+                float pitchL = NormalizeAngle(eulerL.x);
+                float pitchR = NormalizeAngle(eulerR.x);
+                float avgPitch = (pitchL + pitchR) * 0.5f;
+                float diffPitch = (pitchL - pitchR) * 0.5f;
+
+                eulerL.x = avgPitch - diffPitch;
+                eulerR.x = avgPitch + diffPitch;
+
+                // Also swap lateral adduction/abduction delta
+                float rollL = NormalizeAngle(eulerL.z);
+                float rollR = NormalizeAngle(eulerR.z);
+                float avgRoll = (rollL + rollR) * 0.5f;
+                float diffRoll = (rollL - rollR) * 0.5f;
+                eulerL.z = avgRoll - diffRoll;
+                eulerR.z = avgRoll + diffRoll;
+
+                LocalRotations[t, lHip] = Quaternion.Euler(eulerL);
+                LocalRotations[t, rHip] = Quaternion.Euler(eulerR);
+
+                // Knee flexion inversion
+                Quaternion qLKnee = LocalRotations[t, lKnee];
+                Quaternion qRKnee = LocalRotations[t, rKnee];
+                Vector3 eulerLKnee = qLKnee.eulerAngles;
+                Vector3 eulerRKnee = qRKnee.eulerAngles;
+
+                float kneeL = NormalizeAngle(eulerLKnee.x);
+                float kneeR = NormalizeAngle(eulerRKnee.x);
+                float avgKnee = (kneeL + kneeR) * 0.5f;
+                float diffKnee = (kneeL - kneeR) * 0.5f;
+
+                eulerLKnee.x = avgKnee - diffKnee;
+                eulerRKnee.x = avgKnee + diffKnee;
+
+                LocalRotations[t, lKnee] = Quaternion.Euler(eulerLKnee);
+                LocalRotations[t, rKnee] = Quaternion.Euler(eulerRKnee);
+
+                // Ankle compensation
+                Quaternion qLAnk = LocalRotations[t, lAnkle];
+                Quaternion qRAnk = LocalRotations[t, rAnkle];
+                Vector3 eulerLAnk = qLAnk.eulerAngles;
+                Vector3 eulerRAnk = qRAnk.eulerAngles;
+
+                float ankL = NormalizeAngle(eulerLAnk.x);
+                float ankR = NormalizeAngle(eulerRAnk.x);
+                float avgAnk = (ankL + ankR) * 0.5f;
+                float diffAnk = (ankL - ankR) * 0.5f;
+                eulerLAnk.x = avgAnk - diffAnk;
+                eulerRAnk.x = avgAnk + diffAnk;
+
+                LocalRotations[t, lAnkle] = Quaternion.Euler(eulerLAnk);
+                LocalRotations[t, rAnkle] = Quaternion.Euler(eulerRAnk);
+
+                _modifiedFrames.Add(t);
+            }
+        }
+
+        /// <summary>
+        /// Adjusts shoulder and elbow rotations to position arm behind head or in front of chest.
+        /// </summary>
+        public void FixArmPose(int startFrame, int endFrame, bool isLeftArm, bool behindHead)
+        {
+            if (startFrame < 0) startFrame = 0;
+            if (endFrame >= Frames) endFrame = Frames - 1;
+            if (startFrame > endFrame) return;
+
+            string label = behindHead ? "Fix Arm Behind Head" : "Fix Arm Front Chest";
+            RecordUndo($"{label} (Frames {startFrame}-{endFrame})");
+
+            int shJoint = (int)(isLeftArm ? SmplxJoint.L_Shoulder : SmplxJoint.R_Shoulder);
+            int elJoint = (int)(isLeftArm ? SmplxJoint.L_Elbow : SmplxJoint.R_Elbow);
+
+            for (int t = startFrame; t <= endFrame; t++)
+            {
+                if (behindHead)
+                {
+                    // Arm flared backwards/outwards behind head
+                    float shY = isLeftArm ? -40f : 40f;
+                    float shZ = isLeftArm ? 25f : -25f;
+                    LocalRotations[t, shJoint] = Quaternion.Euler(15f, shY, shZ);
+                    LocalRotations[t, elJoint] = Quaternion.Euler(95f, 0f, 0f);
+                }
+                else
+                {
+                    // Arm positioned in front of chest
+                    float shY = isLeftArm ? 35f : -35f;
+                    float shZ = isLeftArm ? -20f : 20f;
+                    LocalRotations[t, shJoint] = Quaternion.Euler(30f, shY, shZ);
+                    LocalRotations[t, elJoint] = Quaternion.Euler(75f, 0f, 0f);
+                }
+
+                _modifiedFrames.Add(t);
+            }
+        }
+
+        /// <summary>
+        /// Backward-compatible wrapper for FixArmPose(..., behindHead: true).
+        /// </summary>
+        public void FixArmBehindHead(int startFrame, int endFrame, bool isLeftArm)
+        {
+            FixArmPose(startFrame, endFrame, isLeftArm, behindHead: true);
         }
 
         #endregion
