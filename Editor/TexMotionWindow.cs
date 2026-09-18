@@ -47,6 +47,13 @@ namespace TexMotion.Editor
         private bool _randomizeSeed = true;
         private float _textCfg = 2.0f;
         private bool _inPlace = true;
+        public static TexMotionWindow Instance { get; private set; }
+        public VrcSetupMode SetupMode => _setupMode;
+        public VrcTargetLayer TargetLayer => _targetLayer;
+        public ScriptableObject CustomTargetMenu => _customTargetMenu;
+        public VrcMotionType MotionType => _motionType;
+        public GameObject TargetAvatarObject => _targetAvatar;
+
         private VrcSetupMode _setupMode = VrcSetupMode.DirectVRCSDK;
         private VrcMotionType _motionType = VrcMotionType.OneShotEmote;
         private VrcTargetLayer _targetLayer = VrcTargetLayer.ActionLayer;
@@ -548,6 +555,7 @@ namespace TexMotion.Editor
 
         private void OnEnable()
         {
+            Instance = this;
             LoadFoldoutStates();
             if (TexMotionSettings.instance != null)
             {
@@ -565,6 +573,7 @@ namespace TexMotion.Editor
 
         private void OnDisable()
         {
+            if (Instance == this) Instance = null;
             AssemblyReloadEvents.beforeAssemblyReload -= OnBeforeAssemblyReload;
             EditorApplication.update -= OnEditorUpdate;
             CleanupVideoPlayer();
@@ -578,6 +587,11 @@ namespace TexMotion.Editor
             _engine?.Dispose();
             _engine = null;
             CleanupUiStyles();
+        }
+
+        public void RefreshLibraryExternal()
+        {
+            RefreshLibrary();
         }
 
         private void OnDestroy()

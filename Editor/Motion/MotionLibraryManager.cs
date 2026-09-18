@@ -25,6 +25,11 @@ namespace TexMotion.Editor.Motion
     {
         public const string GeneratedDirectory = "Assets/TexMotion/Generated";
 
+        public static List<MotionLibraryItem> ScanLibrary(GameObject targetAvatar = null)
+        {
+            return ScanGeneratedMotions(targetAvatar);
+        }
+
         public static List<MotionLibraryItem> ScanGeneratedMotions(GameObject targetAvatar = null)
         {
             var list = new List<MotionLibraryItem>();

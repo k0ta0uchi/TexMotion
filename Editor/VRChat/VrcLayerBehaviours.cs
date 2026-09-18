@@ -79,6 +79,12 @@ namespace TexMotion.Editor.VRChat
             }
 
             var behaviour = GetOrAddBehaviour(state, t);
+            if (behaviour == null)
+            {
+                Debug.LogWarning($"[TexMotion] Could not add StateMachineBehaviour {t.Name} to state {state?.name}");
+                return;
+            }
+
             var layerField = t.GetField("layer");
             if (layerField != null)
             {
@@ -100,6 +106,12 @@ namespace TexMotion.Editor.VRChat
             }
 
             var behaviour = GetOrAddBehaviour(state, t);
+            if (behaviour == null)
+            {
+                Debug.LogWarning($"[TexMotion] Could not add StateMachineBehaviour {t.Name} to state {state?.name}");
+                return;
+            }
+
             string memberName = useAnimation ? "Animation" : "Tracking";
             var headField = t.GetField("trackingHead");
             if (headField != null)
@@ -130,6 +142,11 @@ namespace TexMotion.Editor.VRChat
             }
 
             var behaviour = GetOrAddBehaviour(state, t);
+            if (behaviour == null)
+            {
+                Debug.LogWarning($"[TexMotion] Could not add StateMachineBehaviour {t.Name} to state {state?.name}");
+                return;
+            }
 
             var so = new SerializedObject(behaviour);
             var listProp = so.FindProperty("parameters");
@@ -167,14 +184,55 @@ namespace TexMotion.Editor.VRChat
 
         public static StateMachineBehaviour GetOrAddBehaviour(AnimatorState state, Type behaviourType)
         {
-            foreach (var b in state.behaviours)
+            if (state == null || behaviourType == null) return null;
+
+            if (state.behaviours != null)
             {
-                if (b != null && b.GetType() == behaviourType)
+                foreach (var b in state.behaviours)
                 {
-                    return b;
+                    if (b != null && b.GetType() == behaviourType)
+                    {
+                        return b;
+                    }
                 }
             }
-            return state.AddStateMachineBehaviour(behaviourType);
+
+            StateMachineBehaviour smb = null;
+            try
+            {
+                smb = state.AddStateMachineBehaviour(behaviourType);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[TexMotion] state.AddStateMachineBehaviour({behaviourType.Name}) threw: {ex.Message}");
+            }
+
+            if (smb == null)
+            {
+                try
+                {
+                    smb = ScriptableObject.CreateInstance(behaviourType) as StateMachineBehaviour;
+                    if (smb != null)
+                    {
+                        smb.name = behaviourType.Name;
+                        if (EditorUtility.IsPersistent(state))
+                        {
+                            AssetDatabase.AddObjectToAsset(smb, state);
+                        }
+                        var list = new System.Collections.Generic.List<StateMachineBehaviour>();
+                        if (state.behaviours != null) list.AddRange(state.behaviours);
+                        list.Add(smb);
+                        state.behaviours = list.ToArray();
+                        EditorUtility.SetDirty(state);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[TexMotion] Fallback CreateInstance({behaviourType.Name}) failed: {ex.Message}");
+                }
+            }
+
+            return smb;
         }
     }
 }

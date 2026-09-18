@@ -485,8 +485,12 @@ namespace TexMotion.Editor.Motion
 
             if (GUILayout.Button(TexMotionLocalization.Tr(TexMotionLocalization.SaveAnim), _ghostButtonStyle, GUILayout.Width(96f), GUILayout.Height(26f)))
                 SaveEditedMotionAsAsset();
-            if (GUILayout.Button(TexMotionLocalization.Tr(TexMotionLocalization.ApplyToAvatar), _primaryButtonStyle, GUILayout.Width(116f), GUILayout.Height(26f)))
+
+            var prevBg = GUI.backgroundColor;
+            GUI.backgroundColor = new Color(0.2f, 0.85f, 0.45f);
+            if (GUILayout.Button(TexMotionLocalization.Tr(TexMotionLocalization.ApplyToAvatar), GUILayout.Width(130f), GUILayout.Height(26f)))
                 ApplyEditedMotionToAvatar();
+            GUI.backgroundColor = prevBg;
             EditorGUILayout.EndHorizontal();
 
             GUILayout.Space(4f);
@@ -2815,7 +2819,25 @@ namespace TexMotion.Editor.Motion
 
         private void SaveEditedMotionAsAsset()
         {
-            if (_data == null || _data.TargetAvatar == null)
+            if (_data == null) return;
+
+            if (_data.TargetAvatar == null)
+            {
+                if (TexMotionWindow.Instance != null && TexMotionWindow.Instance.TargetAvatarObject != null)
+                {
+                    _data.TargetAvatar = TexMotionWindow.Instance.TargetAvatarObject.GetComponent<Animator>();
+                }
+                if (_data.TargetAvatar == null)
+                {
+                    var anims = UnityEngine.Object.FindObjectsOfType<Animator>();
+                    foreach (var a in anims)
+                    {
+                        if (a.isHuman) { _data.TargetAvatar = a; break; }
+                    }
+                }
+            }
+
+            if (_data.TargetAvatar == null)
             {
                 EditorUtility.DisplayDialog(
                     TexMotionLocalization.TrLiteral("Error"),
@@ -2824,25 +2846,28 @@ namespace TexMotion.Editor.Motion
                 return;
             }
 
-            string saveDir = "Assets/GeneratedMotions";
+            string saveDir = MotionLibraryManager.GeneratedDirectory;
             if (!Directory.Exists(saveDir))
             {
                 Directory.CreateDirectory(saveDir);
                 AssetDatabase.Refresh();
             }
 
-            string cleanName = string.IsNullOrEmpty(_data.ClipName) ? "TexMotion_Edited" : _data.ClipName;
-            string assetPath = $"{saveDir}/{cleanName}_{DateTime.Now:yyyyMMdd_HHmmss}.anim";
+            string motionName = string.IsNullOrEmpty(_data.ClipName) ? "EditedMotion" : _data.ClipName;
+            string clipFileName = motionName.StartsWith("Anim_") ? $"{motionName}.anim" : $"Anim_{motionName}.anim";
+            string assetPath = $"{saveDir}/{clipFileName}";
 
-            var buildOptions = AnimationBuildOptions.CreateDefault(
-                cleanName,
-                _isLoop,
-                _data.InPlace,
-                _data.HandPose,
-                _data.FaceEmotion
-            );
-            buildOptions.TargetAvatar = _data.TargetAvatar;
-            buildOptions.EmotionIntensity = _data.EmotionIntensity;
+            var buildOptions = new AnimationBuildOptions
+            {
+                ClipName = motionName.StartsWith("Anim_") ? motionName : $"Anim_{motionName}",
+                IsLoop = _isLoop,
+                InPlace = _data.InPlace,
+                Speed = 1.0f,
+                TargetAvatar = _data.TargetAvatar,
+                HandPose = _data.HandPose,
+                FaceEmotion = _data.FaceEmotion,
+                EmotionIntensity = _data.EmotionIntensity
+            };
 
             try
             {
@@ -2853,6 +2878,15 @@ namespace TexMotion.Editor.Motion
 
                 EditorGUIUtility.PingObject(clip);
                 Selection.activeObject = clip;
+
+                if (TexMotionWindow.Instance != null)
+                {
+                    TexMotionWindow.Instance.RefreshLibraryExternal();
+                }
+                else
+                {
+                    MotionLibraryManager.ScanLibrary();
+                }
 
                 EditorUtility.DisplayDialog(
                     TexMotionLocalization.TrLiteral("Motion Saved"),
@@ -2871,7 +2905,25 @@ namespace TexMotion.Editor.Motion
 
         private void ApplyEditedMotionToAvatar()
         {
-            if (_data == null || _data.TargetAvatar == null)
+            if (_data == null) return;
+
+            if (_data.TargetAvatar == null)
+            {
+                if (TexMotionWindow.Instance != null && TexMotionWindow.Instance.TargetAvatarObject != null)
+                {
+                    _data.TargetAvatar = TexMotionWindow.Instance.TargetAvatarObject.GetComponent<Animator>();
+                }
+                if (_data.TargetAvatar == null)
+                {
+                    var anims = UnityEngine.Object.FindObjectsOfType<Animator>();
+                    foreach (var a in anims)
+                    {
+                        if (a.isHuman) { _data.TargetAvatar = a; break; }
+                    }
+                }
+            }
+
+            if (_data.TargetAvatar == null)
             {
                 EditorUtility.DisplayDialog(
                     TexMotionLocalization.TrLiteral("Error"),
@@ -2880,56 +2932,118 @@ namespace TexMotion.Editor.Motion
                 return;
             }
 
-            string saveDir = "Assets/GeneratedMotions";
-            if (!Directory.Exists(saveDir))
+            var targetAvatarObj = _data.TargetAvatar.gameObject;
+
+            VrcSetupMode setupMode = TexMotionWindow.Instance != null
+                ? TexMotionWindow.Instance.SetupMode
+                : (ModularAvatarSetup.IsModularAvatarInstalled() ? VrcSetupMode.ModularAvatar : VrcSetupMode.DirectVRCSDK);
+
+            if (setupMode == VrcSetupMode.ModularAvatar && !ModularAvatarSetup.IsModularAvatarInstalled())
             {
-                Directory.CreateDirectory(saveDir);
-                AssetDatabase.Refresh();
+                bool shouldInstall = EditorUtility.DisplayDialog(
+                    "Modular Avatar が見つかりません",
+                    "Modular Avatar (非破壊モード) でのセットアップには「Modular Avatar」が必要です。\n\nModular Avatar を自動的に導入しますか？\n（※キャンセルした場合は「Setup Target」を「DirectVRCSDK」に変更して直接登録することも可能です）",
+                    "はい (自動導入する)",
+                    "キャンセル"
+                );
+
+                if (shouldInstall)
+                {
+                    ModularAvatarSetup.InstallModularAvatar(() =>
+                    {
+                        ApplyEditedMotionToAvatar();
+                    });
+                }
+                return;
             }
-
-            string cleanName = string.IsNullOrEmpty(_data.ClipName) ? "TexMotion_Edited" : _data.ClipName;
-            string assetPath = $"{saveDir}/{cleanName}_{DateTime.Now:yyyyMMdd_HHmmss}.anim";
-
-            var buildOptions = AnimationBuildOptions.CreateDefault(
-                cleanName,
-                _isLoop,
-                _data.InPlace,
-                _data.HandPose,
-                _data.FaceEmotion
-            );
-            buildOptions.TargetAvatar = _data.TargetAvatar;
-            buildOptions.EmotionIntensity = _data.EmotionIntensity;
 
             try
             {
+                string saveDir = MotionLibraryManager.GeneratedDirectory;
+                if (!Directory.Exists(saveDir)) Directory.CreateDirectory(saveDir);
+
+                string motionName = string.IsNullOrEmpty(_data.ClipName) ? "EditedMotion" : _data.ClipName;
+                string clipFileName = motionName.StartsWith("Anim_") ? $"{motionName}.anim" : $"Anim_{motionName}.anim";
+                string clipPath = $"{saveDir}/{clipFileName}";
+
+                VrcMotionType motionType = _isLoop
+                    ? VrcMotionType.ToggleLoopPose
+                    : (TexMotionWindow.Instance != null ? TexMotionWindow.Instance.MotionType : VrcMotionType.OneShotEmote);
+
+                VrcTargetLayer targetLayer = TexMotionWindow.Instance != null
+                    ? TexMotionWindow.Instance.TargetLayer
+                    : VrcTargetLayer.ActionLayer;
+
+                ScriptableObject customMenu = TexMotionWindow.Instance != null
+                    ? TexMotionWindow.Instance.CustomTargetMenu
+                    : null;
+
+                var buildOptions = new AnimationBuildOptions
+                {
+                    ClipName = motionName.StartsWith("Anim_") ? motionName : $"Anim_{motionName}",
+                    IsLoop = motionType == VrcMotionType.ToggleLoopPose,
+                    InPlace = _data.InPlace,
+                    Speed = 1.0f,
+                    TargetAvatar = _data.TargetAvatar,
+                    HandPose = _data.HandPose,
+                    FaceEmotion = _data.FaceEmotion,
+                    EmotionIntensity = _data.EmotionIntensity
+                };
+
                 var clip = _data.BuildAnimationClip(buildOptions);
-                AssetDatabase.CreateAsset(clip, assetPath);
+                AssetDatabase.CreateAsset(clip, clipPath);
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
 
-                // Setup Avatar Motion (Modular Avatar or Direct VRCSDK)
                 var vrcConfig = new VrcMotionConfig
                 {
-                    MotionName = cleanName,
-                    SetupMode = ModularAvatarSetup.IsModularAvatarInstalled() ? VrcSetupMode.ModularAvatar : VrcSetupMode.DirectVRCSDK,
-                    MotionType = _isLoop ? VrcMotionType.ToggleLoopPose : VrcMotionType.OneShotEmote,
-                    TargetLayer = VrcTargetLayer.ActionLayer,
+                    MotionName = motionName,
+                    SetupMode = setupMode,
+                    MotionType = motionType,
+                    TargetLayer = targetLayer,
                     InPlace = _data.InPlace
                 };
 
-                if (vrcConfig.SetupMode == VrcSetupMode.ModularAvatar)
+                if (setupMode == VrcSetupMode.ModularAvatar)
                 {
-                    ModularAvatarSetup.SetupAvatarMotion(_data.TargetAvatar.gameObject, clip, vrcConfig, saveDir);
+                    GameObject setupObj = ModularAvatarSetup.SetupAvatarMotion(targetAvatarObj, clip, vrcConfig, saveDir);
+                    if (setupObj != null)
+                    {
+                        EditorGUIUtility.PingObject(setupObj);
+                        Selection.activeGameObject = setupObj;
+                    }
+                    EditorUtility.DisplayDialog(
+                        TexMotionLocalization.TrLiteral("Setup Complete"),
+                        TexMotionLocalization.TrFormat(
+                            "Motion '{0}' was successfully applied to {1} via Modular Avatar!",
+                            motionName,
+                            targetAvatarObj.name),
+                        TexMotionLocalization.TrLiteral("Great!"));
                 }
                 else
                 {
-                    VrcDirectSetup.SetupDirectAvatarMotion(_data.TargetAvatar.gameObject, clip, vrcConfig, null, saveDir);
+                    VrcDirectSetup.SetupDirectAvatarMotion(targetAvatarObj, clip, vrcConfig, customMenu, saveDir);
+                    string menuName = customMenu != null
+                        ? customMenu.name
+                        : TexMotionLocalization.TrLiteral("VRCExpressionsMenu");
+                    EditorUtility.DisplayDialog(
+                        TexMotionLocalization.TrLiteral("Setup Complete"),
+                        TexMotionLocalization.TrFormat(
+                            "Motion '{0}' was successfully added directly into '{1}', ExpressionParameters, and {2}!",
+                            motionName,
+                            menuName,
+                            targetLayer),
+                        TexMotionLocalization.TrLiteral("Great!"));
                 }
 
-                EditorUtility.DisplayDialog(
-                    TexMotionLocalization.TrLiteral("Applied to Avatar"),
-                    TexMotionLocalization.TrFormat("Successfully built and applied '{0}' to {1}!", cleanName, _data.TargetAvatar.name),
-                    TexMotionLocalization.TrLiteral("OK"));
+                if (TexMotionWindow.Instance != null)
+                {
+                    TexMotionWindow.Instance.RefreshLibraryExternal();
+                }
+                else
+                {
+                    MotionLibraryManager.ScanLibrary();
+                }
             }
             catch (Exception ex)
             {
