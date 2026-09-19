@@ -237,6 +237,45 @@ namespace TexMotion.Tests
                 else
                 {
                     Console.WriteLine("[FAIL] Test 6: CanUndo was false after polish.");
+            // Test 7: Trajectory Arc Smoother (2-Bone IK Integrity)
+            totalTests++;
+            {
+                var ed = new EditableMotionData(mockData);
+                var opt = new StylizedPolishOptions
+                {
+                    EnableTrajectoryArcSmoothing = true,
+                    ArcSmoothWindow = 5,
+                    ArcBlendWeight = 0.5f,
+                    EnablePoseExaggeration = false,
+                    EnableSnapAndEase = false,
+                    EnableLandingCushion = false,
+                    EnableContrapposto = false,
+                    EnableKinematicChainDelay = false,
+                    EnableOvershoot = false,
+                    StepMode = AnimeStepMode.Off,
+                    EnableKeyframeDecimator = false
+                };
+
+                bool ok = ed.PolishStylizedMotion(0, frames - 1, opt);
+                bool valid = ok;
+                for (int t = 0; t < frames; t++)
+                {
+                    var rot = ed.LocalRotations[t, (int)SmplxJoint.L_Shoulder];
+                    if (float.IsNaN(rot.x) || float.IsNaN(rot.y) || float.IsNaN(rot.z) || float.IsNaN(rot.w))
+                    {
+                        valid = false;
+                        break;
+                    }
+                }
+
+                if (valid)
+                {
+                    Console.WriteLine("[PASS] Test 7: Trajectory Arc Smoother preserved joint rotation integrity.");
+                    passedTests++;
+                }
+                else
+                {
+                    Console.WriteLine("[FAIL] Test 7: Trajectory Arc Smoother produced invalid rotations.");
                 }
             }
 

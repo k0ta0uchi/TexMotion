@@ -8,30 +8,38 @@
 
 - [日本語ガイド](#日本語ガイド)
   - [1. 概要](#1-概要)
-  - [2. ビューポート支援ツール](#2-ビューポート支援ツール)
+  - [2. ビューポート支援ツール & HUD ツールバー](#2-ビューポート支援ツール--hud-ツールバー)
     - [2.1 3D オニオンスキン表示](#21-3d-オニオンスキン表示)
     - [2.2 3D ビューポート 2-Bone IK 操作](#22-3d-ビューポート-2-bone-ik-操作)
-  - [3. 範囲設定と部位別マスク](#3-範囲設定と部位別マスク)
-    - [3.1 In / Out 区間指定](#31-in--out-区間指定)
-    - [3.2 部位別マスク](#32-部位別マスク)
-  - [4. 時間軸・キーフレーム編集](#4-時間軸キーフレーム編集)
-    - [4.1 範囲補間（キーフレーム・トゥイーン）](#41-範囲補間キーフレームトゥイーン)
-    - [4.2 リタイミング（区間の伸縮）](#42-リタイミング区間の伸縮)
-    - [4.3 ループ境界ブレンダー](#43-ループ境界ブレンダー)
-  - [5. 姿勢調整と幾何制約](#5-姿勢調整と幾何制約)
-    - [5.1 アディティブ範囲オフセット](#51-アディティブ範囲オフセット)
+    - [2.3 3D ステージ・背景切替ドロップダウン](#23-3d-ステージ背景切替ドロップダウン)
+    - [2.4 自動接地プレビュー切替（接地トグル）](#24-自動接地プレビュー切替接地トグル)
+  - [3. 4大タブ構成インスペクター概要](#3-4大タブ構成インスペクター概要)
+  - [4. 【タブ1: ポーズ (Pose)】部位マスク・ポーズアクション・パレット](#4-タブ1-ポーズ-pose部位マスクポーズアクションパレット)
+    - [4.1 部位別マスク (Body Part Masking)](#41-部位別マスク-body-part-masking)
+    - [4.2 ポーズアクション (Pose Actions)](#42-ポーズアクション-pose-actions)
+    - [4.3 8スロット ポーズパレットとブレンド適用](#43-8スロット-ポーズパレットとブレンド適用)
+  - [5. 【タブ2: 修復 (Repair)】幾何制約・接触・ジッター修正](#5-タブ2-修復-repair幾何制約接触ジッター修正)
+    - [5.1 範囲加算オフセット (Additive Range Offset)](#51-範囲加算オフセット-additive-range-offset)
     - [5.2 脇部・胸部めり込み防止リミッター](#52-脇部胸部めり込み防止リミッター)
-    - [5.3 地面接地スナップと足位置固定](#53-地面接地スナップと足位置固定)
-  - [6. 品質検査とワークフロー支援](#6-品質検査とワークフロー支援)
-    - [6.1 異常フレーム・ジッター自動検出と一括修復](#61-異常フレームジッター自動検出と一括修復)
-    - [6.2 ポーズパレットとブレンド適用](#62-ポーズパレットとブレンド適用)
+    - [5.3 地面接地スナップと足位置固定 (Ground Snap & Lock Feet)](#53-地面接地スナップと足位置固定-ground-snap--lock-feet)
+    - [5.4 異常フレーム・ジッター自動検出と一括修復 (Glitch Auto-Fixer)](#54-異常フレームジッター自動検出と一括修復-glitch-auto-fixer)
+  - [6. 【タブ3: タイミング (Timing)】時間軸・キーフレーム編集](#6-タブ3-タイミング-timing時間軸キーフレーム編集)
+    - [6.1 In / Out 区間指定](#61-in--out-区間指定)
+    - [6.2 範囲Tween補間（キーフレーム・トゥイーン）](#62-範囲tween補間キーフレームトゥイーン)
+    - [6.3 リタイミング（区間の伸縮・Time Warp）](#63-リタイミング区間の伸縮time-warp)
+    - [6.4 ループ境界ブレンダー (Seamless Loop Blender)](#64-ループ境界ブレンダー-seamless-loop-blender)
+  - [7. 【タブ4: ポリッシュ (Polish)】手付け風クオリティ向上](#7-タブ4-ポリッシュ-polish手付け風クオリティ向上)
+    - [7.1 推奨プリセット](#71-推奨プリセット)
+    - [7.2 9つの機能と技術仕様](#72-9つの機能と技術仕様)
+    - [7.3 操作手順](#73-操作手順)
 - [English Guide](#english-guide)
   - [1. Overview](#1-overview)
-  - [2. Viewport Assistance Tools](#2-viewport-assistance-tools)
-  - [3. Range Selection & Body Part Masking](#3-range-selection--body-part-masking)
-  - [4. Temporal & Keyframe Editing](#4-temporal--keyframe-editing)
-  - [5. Pose Adjustment & Geometric Constraints](#5-pose-adjustment--geometric-constraints)
-  - [6. Quality Assurance & Workflow Helpers](#6-quality-assurance--workflow-helpers)
+  - [2. Viewport Assistance Tools & HUD](#2-viewport-assistance-tools--hud)
+  - [3. 4-Tab Inspector Overview](#3-4-tab-inspector-overview)
+  - [4. [Tab 1: Pose] Masking, Actions & Palette](#4-tab-1-pose-masking-actions--palette)
+  - [5. [Tab 2: Repair] Geometric Constraints, Grounding & Glitch Fix](#5-tab-2-repair-geometric-constraints-grounding--glitch-fix)
+  - [6. [Tab 3: Timing] Temporal & Keyframe Editing](#6-tab-3-timing-temporal--keyframe-editing)
+  - [7. [Tab 4: Polish] Stylized Hand-Keyed Polish](#7-tab-4-polish-stylized-hand-keyed-polish)
 
 ---
 
@@ -39,15 +47,17 @@
 
 ## 1. 概要
 
-動画からの姿勢推定処理（HMR2 / WHAM / ViTPose）では、被写体の遮蔽、高速移動によるブレ、または視覚的なあいまいさに起因して、関節角度の急激な跳躍や四肢のめり込みが発生することがあります。TexMotion は、推定された 3D モーションデータを Unity 上で直感的に調整するための専用タイムラインエディタを備えています。
+動画からの姿勢推定処理（HMR2 / WHAM / ViTPose）では、被写体の遮蔽、高速移動によるブレ、または視覚的なあいまいさに起因して、関節角度の急激な跳躍や四肢のめり込み、足の浮き上がりが発生することがあります。TexMotion は、推定された 3D モーションデータを Unity 上で直感的に調整するための専用タイムラインエディタを備えています。
 
-本エディタには、単一フレームの関節角度調整にとどまらず、複数フレームにまたがる補間、骨格幾何に基づく逆運動学（IK）操作、物理的接触やループ処理を支援する計11種類の高度修正ツールが統合されています。
+本エディタは操作性とワークフローが大幅にリファクタリングされ、ビューポート支援 HUD ツールバーに加え、右側インスペクターが **「ポーズ」「修復」「タイミング」「ポリッシュ」** の 4 大タブ構成に統合・整理されています。
 
 ![タイムラインエディタ全体図](images/timeline_editor_overview.jpg)
 
 ---
 
-## 2. ビューポート支援ツール
+## 2. ビューポート支援ツール & HUD ツールバー
+
+ビューポート上部の HUD（Heads-Up Display）ツールバーには、3D アバターの視認性と操作性を高める各種トグルおよび設定が集約されています。
 
 ### 2.1 3D オニオンスキン表示
 手動修正を行う際、前後フレームとの連続性を視覚的に確認できない状態では、滑らかな軌道を作り出すことが困難になります。オニオンスキン機能は、現在のフレームの前後に位置する姿勢を半透明のゴーストメッシュとしてビューポート上に重畳描画します。
@@ -56,13 +66,11 @@
   - 直前フレーム（Frame - 1）: シアン色（水色）の半透明シルエットで描画されます。
   - 直後フレーム（Frame + 1）: マゼンタ色（赤紫色）の半透明シルエットで描画されます。
 - **操作手順**:
-  1. ビューポート上部の HUD にある「🧅 Onion」ボタンを押下して有効化します。
+  1. HUD ツールバーの「🧅 Onion」ボタンを押下して有効化します。
   2. タイムラインスライダーを移動させると、前後の姿勢差が色分けされて表示されます。
 
 ### 2.2 3D ビューポート 2-Bone IK 操作
 腕や脚の末端（手首・足首）を目標位置へ移動させたい場合、肩・肘・手首の3関節を個別に回転させる手法は調整コストが高くなります。本機能は、ビューポート上に操作用ピンを提示し、ドラッグ操作によって解析的 2-Bone IK（2関節逆運動学）を計算して関節角度へ反映します。
-
-![ツール詳細図](images/timeline_editor_tools_detail.jpg)
 
 - **対象関節**:
   - 左手首（`SmplxJoint.L_Wrist`）、右手首（`SmplxJoint.R_Wrist`）
@@ -71,22 +79,39 @@
   - 余弦定理（Law of Cosines）を用いた解析的解法により、目標点への到達に必要な親関節と中間関節の回転量を瞬時に算出します。
   - 四肢の最大長を超える位置へドラッグされた場合は、到達限界距離へ自動的にクランプされます。
 - **操作手順**:
-  1. ビューポート上部 HUD の「🦾 IK Pins」ボタンを押下します。
+  1. HUD ツールバーの「🦾 IKピン」ボタンを押下します。
   2. 手首または足首の位置に黄色の操作ピンが表示されます。
   3. ピンを左ドラッグすると、四肢がリアルタイムに追従して変形します。マウスボタンを離した時点で編集が確定し、Undo 履歴へ記録されます。
 
+### 2.3 3D ステージ・背景切替ドロップダウン
+用途に応じて 3D プレビューの背景環境をドロップダウンメニューから瞬時に切り替えることができます。
+- **ステージ (Stage)**: チェッカーグリッド床面、動的コンタクトシャドウ、深度Z遮蔽を備えたスタジオ空間。足の設置感や空間的な距離関係を直感的に把握できます。
+- **ダーク (Dark)**: 従来の漆黒背景。骨格ギズモやオニオンスキンメッシュの高コントラストな確認に最適です。
+- **グリーン (Green)**: クロマキー合成用の高純度グリーンバック。OBS や動画編集ソフトでの切り抜き素材収録に活用できます。
+
+### 2.4 自動接地プレビュー切替（接地トグル）
+AI 推定直後のモーションデータにおいて、足先が地面から浮いて見えたり、逆に沈み込んでいるように見える場合があります。HUD の「接地」ボタンをオンにすると、最下点の足高さを自動検出し、床面 $Y=0$ に自然に接地した状態でプレビュー表示されます。
+
 ---
 
-## 3. 範囲設定と部位別マスク
+## 3. 4大タブ構成インスペクター概要
 
-### 3.1 In / Out 区間指定
-広範なモーションデータの中から特定の動作区間（歩行の1周期、跳躍の離陸から着地までなど）に限定して処理を適用するために、In / Out 範囲を設定します。
+タイムラインエディタ右側のインスペクターパネルは、作業目的別に 4 つの独立したタブモジュールに分類されています。
 
-- **操作方法**:
-  - インスペクターの「Range In」「Range Out」スライダーを調整するか、現在の再生位置で「Set In」「Set Out」ボタンを押下します。
-  - 設定された範囲は、タイムライン下部のルーラー帯に淡いアクア色の帯（IN / OUT マーカー付き）として可視化されます。
+![機能詳細図](images/timeline_editor_tools_detail.jpg)
 
-### 3.2 部位別マスク
+| タブ | 名称 | 主な機能と対象 |
+| :--- | :--- | :--- |
+| **1. ポーズ** | Pose & Action | 関節個別回転、部位別マスク、ポーズコピー/貼付/反転、8スロットポーズパレット |
+| **2. 修復** | Repair & Contact | 範囲加算オフセット（腰高さ・腕開き角）、脇めり込みリミッター、接地スナップ＆足固定、グリッチ自動検出・一括修復 |
+| **3. タイミング** | Timing & Tween | In/Out 区間指定、範囲Tween補間（5種イージング）、リタイミング（区間伸縮）、ループ境界ブレンダー |
+| **4. ポリッシュ** | Stylized Polish | 手付け風モーションポリッシュ（Action/Weight/Subtle プリセット、9大数理運動学フィルター） |
+
+---
+
+## 4. 【タブ1: ポーズ (Pose)】部位マスク・ポーズアクション・パレット
+
+### 4.1 部位別マスク (Body Part Masking)
 全身のモーションを変更することなく、例えば「下半身のステップは維持したまま、上半身の向きだけを修正する」「左腕の動きだけをコピー＆ペーストする」といった作業を可能にするビットマスク機構です。
 
 - **選択可能なプリセット**:
@@ -95,20 +120,69 @@
   - `LowerBody`: 骨盤（Pelvis / Root）、両脚
   - `Arms`: 両腕（鎖骨、肩、肘、手首）
   - `Legs`: 両脚（股関節、膝、足首、足先）
-- **マスク対応操作**:
-  - **Paste Masked**: クリップボードに保持されている姿勢のうち、指定部位のみを対象フレームへ貼り付けます。
-  - **Reset Masked**: 指定部位のみを元の推定姿勢へ復元します。
-  - **Smooth Masked**: 指定部位のみを前後フレームとブレンドして平滑化します。
+
+### 4.2 ポーズアクション (Pose Actions)
+現在のフレームまたはクリップボードを対象に、頻出のポーズ編集をワンクリックで実行します。
+- **ポーズをコピー / ポーズを貼り付け**: アクティブな部位マスクに基づいて、選択部位のみの姿勢をクリップボード経由で他フレームへ適用します。
+- **ポーズを反転 (Mirror)**: 左右対称なポーズ反転を行います（歩行の逆足ポーズ作成などに便利です）。
+- **フレームをスムーズ**: 前後フレームと Slerp ブレンドを行い、特定フレームの突発的な揺れを平滑化します。
+- **フレームをリセット**: 元の推定姿勢へ復元します。
+- **Tポーズ**: 基準となる標準 T ポーズへリセットします。
+
+### 4.3 8スロット ポーズパレットとブレンド適用
+頻繁に使用する姿勢（綺麗なニュートラルポーズ、固有の構え姿勢など）を 8 つのスロットに一時保存し、任意のフレームへ任意の割合でブレンド適用できます。
+
+- **操作手順**:
+  1. スロット番号（1〜8）を選択します。
+  2. 「💾 Store to Slot」を押下して現在の姿勢を記録します（登録済みスロットは緑色 ● で示されます）。
+  3. 修正したいフレームへ移動し、「Blend Weight」スライダー（0.0〜1.0）を設定します。
+  4. 部位マスクを選択した状態で「Apply Blend」を押下すると、部分的な姿勢反映が実行されます。
 
 ---
 
-## 4. 時間軸・キーフレーム編集
+## 5. 【タブ2: 修復 (Repair)】幾何制約・接触・ジッター修正
 
-### 4.1 範囲補間（キーフレーム・トゥイーン）
+### 5.1 範囲加算オフセット (Additive Range Offset)
+指定した In-Out 範囲の全フレームに対して、一定の姿勢変形を加算します。
+- **腰の高さオフセット (Hips Y)**: キャラクタ全体の腰高（浮遊感の解消や屈み具合）をメートル単位で上下させます。
+- **腕の開き角 (Arm Open Angle)**: 両肩の開き角（Tポーズ方向 / 閉じ方向）を一括調整します。
+- **範囲の境界をフェード (Fade at Range Edges)**: 有効にすると、区間の両端において重みを自動的に 0 へエルミート減衰させ、区間外のモーションとの不連続な段差を防ぎます。
+
+### 5.2 脇部・胸部めり込み防止リミッター
+タイトな服や体型モデルにおいて、推定された腕が胸部や脇腹の内側へ突き抜けてしまう問題（ペネトレーション）を抑制します。左右の肩関節のローカル角度を検査し、体幹に近づきすぎている場合に、指定した下限角度へと安全にクランプします。
+
+### 5.3 地面接地スナップと足位置固定 (Ground Snap & Lock Feet)
+歩行や足踏みにおいて、足先が地面（床面）を突き抜けてしまう現象や、接地中に足が前後左右へ滑る現象（フットスライディング）を補正します。
+
+- **Ground Snap**:
+  - SMPL-X 骨格の順運動学（FK）により、両足首および足先のワールド高さを評価します。
+  - 床面高さ（`Ground Plane Y`）を下回ったフレームを検出し、接地に必要な量だけルート位置（骨盤）の高さを自動補正します。
+- **Lock Feet**:
+  - 接触開始フレーム（In点）における足首の 3D 空間位置を固定目標とし、区間内の各フレームに対して足の 2-Bone IK を解いて足裏を一定位置に留めます。
+
+### 5.4 異常フレーム・ジッター自動検出と一括修復 (Glitch Auto-Fixer)
+トラッキング外れによって発生する、1フレームだけ関節が激しく跳ねる異常（グリッチ）を自動的に洗い出します。
+
+- **検出基準**:
+  1. **過大角速度**: 連続するフレーム間で関節の回転角速度が 720°/秒 を超過している。
+  2. **急反転スパイク**: 関節が 110° 以上の急角度で跳躍し、直後のフレームで元の角度近傍（45°未満）へ急激に戻っている。
+- **表示と修復**:
+  - タイムライン上に赤色のバーが描画され、問題箇所のフレーム番号と原因関節が一覧表示されます。
+  - 「Go」ボタンで該当フレームへ即座に移動できます。
+  - 「⚡ Fix All Glitches」を押下すると、全検出フレームに対して近傍フレームからの球面線形補間（Slerp）が一括適用され、1回の操作で全修正が完了します。
+
+---
+
+## 6. 【タブ3: タイミング (Timing)】時間軸・キーフレーム編集
+
+### 6.1 In / Out 区間指定
+広範なモーションデータの中から特定の動作区間（歩行の1周期、跳躍の離陸から着地までなど）に限定して処理を適用するために、In / Out 範囲を設定します。設定された範囲は、タイムライン下部のルーラー帯に淡いアクア色の帯（IN / OUT マーカー付き）として可視化されます。
+
+### 6.2 範囲Tween補間（キーフレーム・トゥイーン）
 欠損したフレームや、極端なトラッキング破綻が発生した区間を、始点（In点）と終点（Out点）の姿勢に基づいて滑らかに補間します。
 
 - **補間アルゴリズム**:
-  - ルート移動（位置）: ベクトル線形補間（Lerp）
+  - ルート移動（位置）: ベクトル線形補間（Lerp）によるスムーズな移動推移
   - 関節回転: 四元数球面線形補間（Quaternion.Slerp）
 - **イージング曲線**:
   - `Linear`: 等速運動
@@ -121,10 +195,10 @@
   2. ドロップダウンから希望のイージング型を選択します。
   3. 「Interpolate In ➔ Out (Tween)」ボタンを押下します。
 
-### 4.2 リタイミング（区間の伸縮）
-特定のアクション（パンチのタメ、スローモーション演出など）の再生速度を時間軸上で変更します。選択された In-Out 区間のフレーム数を、指定した目標フレーム数へとリサンプリングして伸縮します。全体の総フレーム数は自動的に再計算されます。
+### 6.3 リタイミング（区間の伸縮・Time Warp）
+特定のアクション（パンチのタメ、スローモーション演出など）の再生速度を時間軸上で変更します。選択された In-Out 区間のフレーム数を、指定した目標フレーム数へとリサンプリングして伸縮します。等速 / 1.5倍 / 2倍 / 0.5倍 などのプリセットボタンで即座にテンポ調整が可能です。
 
-### 4.3 ループ境界ブレンダー
+### 6.4 ループ境界ブレンダー (Seamless Loop Blender)
 待機モーションや走行アニメーションをゲームでループ再生する場合、最終フレームから先頭フレームへ遷移する瞬間に姿勢の不一致（ポップノイズ）が生じます。
 
 - **機構**:
@@ -136,56 +210,7 @@
 
 ---
 
-## 5. 姿勢調整と幾何制約
-
-### 5.1 アディティブ範囲オフセット
-指定した In-Out 範囲の全フレームに対して、一定の姿勢変形を加算します。
-- **Hips Y Offset**: キャラクタ全体の腰高（浮遊感の解消や屈み具合）をメートル単位で上下させます。
-- **Arm Open Angle**: 両肩の開き角（Tポーズ方向 / 閉じ方向）を一括調整します。
-- **Fade at Range Edges**: 有効にすると、区間の両端において重みを自動的に 0 へ減衰させ、区間外のモーションとの不連続な段差を防ぎます。
-
-### 5.2 脇部・胸部めり込み防止リミッター
-タイトな服や体型モデルにおいて、推定された腕が胸部や脇腹の内側へ突き抜けてしまう問題（ペネトレーション）を抑制します。
-
-- **機構**:
-  - 左右の肩関節のローカル角度を検査し、体幹に近づきすぎている（最小角度を下回っている）場合に、指定した下限角度（`Min Armpit Angle`）へと安全にクランプします。
-
-### 5.3 地面接地スナップと足位置固定
-歩行や足踏みにおいて、足先が地面（床面）を突き抜けてしまう現象や、接地中に足が前後左右へ滑る現象（フットスライディング）を補正します。
-
-- **Ground Snap**:
-  - SMPL-X 骨格の順運動学（FK）により、両足首および足先のワールド高さを評価します。
-  - 床面高さ（`Ground Plane Y`）を下回ったフレームを検出し、接地に必要な量だけルート位置（骨盤）の高さを自動補正します。
-- **Lock Feet**:
-  - 接触開始フレーム（In点）における足首の 3D 空間位置を固定目標とし、区間内の各フレームに対して足の 2-Bone IK を解いて足裏を一定位置に留めます。
-
----
-
-## 6. 品質検査とワークフロー支援
-
-### 6.1 異常フレーム・ジッター自動検出と一括修復
-トラッキング外れによって発生する、1フレームだけ関節が激しく跳ねる異常（グリッチ）を自動的に洗い出します。
-
-- **検出基準**:
-  1. **過大角速度**: 連続するフレーム間で関節の回転角速度が 720°/秒 を超過している。
-  2. **急反転スパイク**: 関節が 110° 以上の急角度で跳躍し、直後のフレームで元の角度近傍（45°未満）へ急激に戻っている。
-- **表示と修復**:
-  - タイムライン上に赤色のバーが描画され、問題箇所のフレーム番号と原因関節が一覧表示されます。
-  - 「Go」ボタンで該当フレームへ即座に移動できます。
-  - 「⚡ Fix All Glitches」を押下すると、全検出フレームに対して近傍フレームからの球面線形補間（Slerp）が一括適用され、1回の操作で全修正が完了します。
-
-### 6.2 ポーズパレットとブレンド適用
-頻繁に使用する姿勢（綺麗なニュートラルポーズ、固有の構え姿勢など）を 8 つのスロットに一時保存し、任意のフレームへ任意の割合でブレンド適用できます。
-
-- **操作手順**:
-  1. スロット番号（1〜8）を選択します。
-  2. 「💾 Store to Slot」を押下して現在の姿勢を記録します（登録済みスロットは緑色 ● で示されます）。
-  3. 修正したいフレームへ移動し、「Blend Weight」スライダー（0.0〜1.0）を設定します。
-  4. 部位マスクを選択した状態で「Apply Blend」を押下すると、部分的な姿勢反映が実行されます。
-
----
-
-## 7. 手付け風クオリティ向上（Stylized Hand-Keyed Polish）
+## 7. 【タブ4: ポリッシュ (Polish)】手付け風クオリティ向上（Stylized Hand-Keyed Polish）
 
 単眼カメラからの AI 姿勢推定で得られたモーションは、全フレームにキーが記録されたベタ打ちデータとなるため、動作速度が均一で緩急に乏しく、全身が同時に動くロボット感や、浮遊感（ウェイト感の不足）が生じやすくなります。
 
@@ -244,15 +269,17 @@ TexMotion は、ディズニーの 12 原則や日本のアニメーション技
 
 ## 1. Overview
 
-Monocular motion capture and 3D pose estimation methods (such as HMR2, WHAM, and ViTPose) are prone to tracking noise, limb penetration, and abrupt joint flips caused by occlusions, high-velocity movements, or visual ambiguities. The TexMotion Timeline Editor (`MotionTimelineEditorWindow`) offers an integrated suite of 11 advanced correction tools designed to inspect and refine 3D motion clips directly inside the Unity Editor.
+Monocular motion capture and 3D pose estimation methods (such as HMR2, WHAM, and ViTPose) are prone to tracking noise, limb penetration, and abrupt joint flips caused by occlusions, high-velocity movements, or visual ambiguities. The TexMotion Timeline Editor (`MotionTimelineEditorWindow`) offers an integrated suite of advanced correction tools designed to inspect and refine 3D motion clips directly inside the Unity Editor.
+
+The editor has been refactored into an intuitive workflow featuring an interactive viewport HUD toolbar and a streamlined **4-Tab Inspector** consisting of **Pose**, **Repair**, **Timing**, and **Polish**.
 
 ![Timeline Editor Overview](images/timeline_editor_overview.jpg)
 
 ---
 
-## 2. Viewport Assistance Tools
+## 2. Viewport Assistance Tools & HUD
 
-![Advanced Pose Correction Tools Detail](images/timeline_editor_tools_detail.jpg)
+The HUD toolbar located directly above the 3D viewport consolidates essential visualization and snapping controls.
 
 ### 2.1 3D Onion Skin Overlay
 Provides visual continuity during manual keyframe editing by rendering translucent ghost silhouettes of adjacent frames directly in the 3D viewport.
@@ -267,67 +294,95 @@ Enables intuitive dragging of limb extremities (wrists and ankles) instead of ro
 - **Algorithm**: Analytical Two-Bone Inverse Kinematics using the Law of Cosines. Clamps targets beyond reach to limb length limits.
 - **Usage**: Toggle `🦾 IK Pins` in the HUD, then click and drag the yellow manipulator pins in the viewport. Rotations are automatically applied and recorded into the Undo stack upon mouse release.
 
+### 2.3 3D Stage & Background Selector (Stage / Dark / Green)
+Switch between rendering environments via the HUD dropdown:
+- **Stage**: Studio floor with checkerboard grid, dynamic contact shadow, and Z-depth occlusion for accurate spatial grounding assessment.
+- **Dark**: High-contrast pitch-black environment for inspecting skeleton gizmos and onion skin overlays.
+- **Green**: Pure chroma-key green screen for recording video clips and streaming composite overlays.
+
+### 2.4 Auto Foot Grounding Preview (Ground Toggle)
+When active, automatically detects the lowest foot extremity point per frame and snaps the avatar vertically so that feet rest precisely on the ground plane ($Y=0$) during preview.
+
 ---
 
-## 3. Range Selection & Body Part Masking
+## 3. 4-Tab Inspector Overview
 
-### 3.1 In / Out Range Selection
-Specifies a subset of frames for batch operations (tweens, retiming, grounding, offsets).
-- **Usage**: Adjust `Range In` / `Range Out` sliders or click `Set In` / `Set Out` to capture the current playhead frame. The selected range is highlighted with an aqua-tinted band on the timeline ruler.
+The inspector panel on the right organizes editing workflows into four dedicated modules.
 
-### 3.2 Body Part Masking
+![Advanced Pose Correction Tools Detail](images/timeline_editor_tools_detail.jpg)
+
+| Tab | Name | Primary Capabilities |
+| :--- | :--- | :--- |
+| **1. Pose** | Pose & Action | Joint rotation, body part masking, copy/paste/mirror actions, 8-slot pose palette |
+| **2. Repair** | Repair & Contact | Additive range offsets (hips & arms), armpit penetration limiter, ground snapping & foot locking, glitch auto-repair |
+| **3. Timing** | Timing & Tween | In/Out range marking, 5-curve tween interpolation, time-warp retiming, seamless loop blender |
+| **4. Polish** | Stylized Polish | Hand-keyed stylized animation polish (Action, Weight, and Subtle presets across 9 kinematic filters) |
+
+---
+
+## 4. [Tab 1: Pose] Masking, Actions & Palette
+
+### 4.1 Body Part Masking
 Allows selective editing across anatomical limb groupings without altering the rest of the skeleton.
 - **Presets**: `All`, `UpperBody`, `LowerBody`, `Arms`, `Legs`.
-- **Masked Operations**: `Paste Masked`, `Reset Masked`, and `Smooth Masked` apply only to joints defined within the active mask.
+
+### 4.2 Quick Pose Actions
+Provides one-click editing operations for the current frame:
+- **Copy / Paste Pose**: Applies copied poses across frames strictly respecting the active body mask.
+- **Mirror Pose**: Horizontally flips the posture across the sagittal plane (ideal for reverse-step animation).
+- **Smooth Frame**: Slerps current pose with neighboring frames to dampen isolated twitches.
+- **Reset Frame**: Restores the raw estimated pose.
+- **T-Pose**: Resets to canonical reference T-pose.
+
+### 4.3 8-Slot Pose Palette & Blending
+Provides 8 fast-access pose storage slots.
+- Record key poses using `💾 Store to Slot`.
+- Blend stored poses into target frames with customizable `Blend Weight` (0.0 to 1.0) and body part masks.
 
 ---
 
-## 4. Temporal & Keyframe Editing
-
-### 4.1 Range Tweening & Interpolation
-Interpolates a missing or corrupted span of frames between the `In` and `Out` anchor frames using selected easing curves.
-- **Supported Easing**: `Linear`, `EaseIn` ($t^2$), `EaseOut` ($1 - (1-t)^2$), `EaseInOut`, and `SmoothStep` ($3t^2 - 2t^3$).
-- Rotations are blended via spherical linear interpolation (`Quaternion.Slerp`), and root displacement is interpolated via vector `Lerp`.
-
-### 4.2 Range Retiming (Time Warp)
-Stretches or compresses the duration of the selected In-Out frame range to a target frame count while resampling intermediate poses with continuous Slerp blending. Total animation length is updated accordingly.
-
-### 4.3 Loop Boundary Blender
-Eliminates seam discontinuities in looping animations (e.g. idle or run cycles) by cross-fading trailing frames into the opening frame (Frame 0). Handles root position continuity in InPlace playback mode.
-
----
-
-## 5. Pose Adjustment & Geometric Constraints
+## 5. [Tab 2: Repair] Geometric Constraints, Grounding & Glitch Fix
 
 ### 5.1 Additive Range Offset
-Adds continuous offsets across the active In-Out range.
-- `Hips Y Offset`: Raises or lowers character height in meters.
-- `Arm Open Angle`: Adjusts shoulder abduction/adduction symmetrically.
-- `Fade at Range Edges`: Smooths transitions at the range boundaries using Hermite weight falloff to prevent abrupt jerks.
+Adds continuous offsets across the active In-Out range:
+- `Hips Y Offset`: Adjusts character height in meters.
+- `Arm Open Angle`: Symmetrically widens or narrows shoulder abduction.
+- `Fade at Range Edges`: Applies smooth Hermite falloff at range boundaries to eliminate abrupt step changes.
 
 ### 5.2 Armpit & Chest Penetration Limiter
 Guarantees a minimum arm opening angle (`Min Armpit Angle`) for upper arms, preventing hands and forearms from clipping through the chest or torso geometry.
 
-### 5.3 Foot Grounding & Sliding Prevention
+### 5.3 Foot Grounding & Sliding Prevention (Ground Snap & Lock Feet)
 - **Foot Grounding**: Evaluates forward kinematics (FK) to measure foot and ankle world heights. If either foot penetrates below `Ground Plane Y`, pelvis height is adjusted upward to ensure firm contact.
 - **Lock Feet**: Fixes the ankle's 3D coordinates to the In-frame contact position throughout the range using 2-Bone IK, eliminating foot-sliding artifacts.
 
----
-
-## 6. Quality Assurance & Workflow Helpers
-
-### 6.1 Glitch Highlighter & Auto-Fixer
+### 5.4 Glitch Highlighter & Auto-Fixer
 Scans motion data for unnatural tracking artifacts based on high angular velocity (>720°/s) and sharp isolated reversals (>110° spikes).
 - Displays warning markers directly on the timeline track.
 - The `Go` button navigates directly to the corrupted frame.
 - The `⚡ Fix All Glitches` button repairs all detected anomalies in a single atomic operation via neighboring-frame Slerp.
 
-### 6.2 8-Slot Pose Palette & Blending
-Provides 8 fast-access pose storage slots. Recorded poses can be blended into single frames or across ranges with adjustable weights (0.0 to 1.0) and body part masks.
+---
+
+## 6. [Tab 3: Timing] Temporal & Keyframe Editing
+
+### 6.1 In / Out Range Selection
+Specifies a subset of frames for batch operations (tweens, retiming, grounding, offsets). The selected range is highlighted with an aqua-tinted band on the timeline ruler.
+
+### 6.2 Range Tweening & Interpolation
+Interpolates a missing or corrupted span of frames between the `In` and `Out` anchor frames using selected easing curves.
+- **Supported Easing**: `Linear`, `EaseIn` ($t^2$), `EaseOut` ($1 - (1-t)^2$), `EaseInOut`, and `SmoothStep` ($3t^2 - 2t^3$).
+- Rotations are blended via spherical linear interpolation (`Quaternion.Slerp`), and root displacement is interpolated via vector `Lerp`.
+
+### 6.3 Range Retiming (Time Warp)
+Stretches or compresses the duration of the selected In-Out frame range to a target frame count while resampling intermediate poses with continuous Slerp blending. Fast presets (1.5x, 2x, 0.5x) allow instant pacing adjustments.
+
+### 6.4 Seamless Loop Boundary Blender
+Eliminates seam discontinuities in looping animations (e.g. idle or run cycles) by cross-fading trailing frames into the opening frame (Frame 0). Handles root position continuity in InPlace playback mode.
 
 ---
 
-## 7. Stylized Hand-Keyed Polish
+## 7. [Tab 4: Polish] Stylized Hand-Keyed Polish
 
 Monocular AI pose estimation models typically generate dense, uniform-velocity keyframes that lack the dynamic spacing, timing contrast, and physical weight of handcrafted character animation. Characters often exhibit robotic simultaneity (moving and stopping all limbs in the same frame) and floating sensations caused by weak ground contact responses.
 

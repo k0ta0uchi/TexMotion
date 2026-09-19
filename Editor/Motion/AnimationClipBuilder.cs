@@ -18,6 +18,7 @@ namespace TexMotion.Editor.Motion
         public FaceEmotionType FaceEmotion;
         public float EmotionIntensity;
         public float MinConfidenceThreshold; // Optional confidence filter for VideoMotionData
+        public float GroundingOffset; // Vertical offset to align feet with ground plane
 
         public static AnimationBuildOptions CreateDefault(
             string clipName = "TexMotion_Anim",
@@ -36,7 +37,8 @@ namespace TexMotion.Editor.Motion
                 HandPose = handPose,
                 FaceEmotion = faceEmotion,
                 EmotionIntensity = 1.0f,
-                MinConfidenceThreshold = 0f
+                MinConfidenceThreshold = 0f,
+                GroundingOffset = 0f
             };
         }
     }
@@ -222,18 +224,20 @@ namespace TexMotion.Editor.Motion
                         ResetFingerPoses(fingerBoneMap, initialFingerRotations);
                     }
 
-                    // 3. Apply Root Position
+                    // 3. Apply Root Position with Grounding Offset
                     if (hips != null && motionData.RootPositions != null && motionData.RootPositions.Length > t)
                     {
                         Vector3 rawPos = motionData.RootPositions[t];
                         Vector3 delta = rawPos - firstFramePos;
+                        float groundingY = options.GroundingOffset;
+
                         if (options.InPlace)
                         {
-                            hips.localPosition = new Vector3(initialHipsPos.x, initialHipsPos.y + delta.y, initialHipsPos.z);
+                            hips.localPosition = new Vector3(initialHipsPos.x, initialHipsPos.y + delta.y + groundingY, initialHipsPos.z);
                         }
                         else
                         {
-                            hips.localPosition = initialHipsPos + delta;
+                            hips.localPosition = initialHipsPos + delta + new Vector3(0f, groundingY, 0f);
                         }
                     }
 

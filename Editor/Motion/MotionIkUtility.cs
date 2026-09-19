@@ -47,9 +47,22 @@ namespace TexMotion.Editor.Motion
         /// </summary>
         public static Vector3[] ComputeForwardKinematics(Vector3 rootPosition, Quaternion[] localRotations)
         {
+            ComputeForwardKinematics(rootPosition, localRotations, out var worldPositions, out _);
+            return worldPositions;
+        }
+
+        /// <summary>
+        /// Computes global 3D positions and orientations of all 22 SMPL-X joints for a given frame using Forward Kinematics.
+        /// </summary>
+        public static void ComputeForwardKinematics(
+            Vector3 rootPosition,
+            Quaternion[] localRotations,
+            out Vector3[] worldPositions,
+            out Quaternion[] worldRotations)
+        {
             int jointCount = SmplxJointDefinitions.JointCount;
-            var worldPositions = new Vector3[jointCount];
-            var worldRotations = new Quaternion[jointCount];
+            worldPositions = new Vector3[jointCount];
+            worldRotations = new Quaternion[jointCount];
 
             worldPositions[0] = rootPosition + DefaultJointOffsets[SmplxJoint.Pelvis];
             worldRotations[0] = localRotations != null && localRotations.Length > 0 ? localRotations[0] : Quaternion.identity;
@@ -70,8 +83,6 @@ namespace TexMotion.Editor.Motion
                 worldPositions[i] = worldPos;
                 worldRotations[i] = worldRot;
             }
-
-            return worldPositions;
         }
 
         /// <summary>
@@ -115,11 +126,11 @@ namespace TexMotion.Editor.Motion
             // Current limb geometry
             Vector3 curL1 = midPos - rootPos;
             Vector3 curL2 = endPos - midPos;
-            Vector3 curToEnd = endPos - rootPos;
 
             // Determine bend normal using pole vector
             Vector3 targetDir = toTarget / targetDist;
-            Vector3 normal = Vector3.Cross(targetDir, poleVector - rootPos);
+            Vector3 poleDir = poleVector - rootPos;
+            Vector3 normal = Vector3.Cross(targetDir, poleDir);
             if (normal.sqrMagnitude < 0.0001f)
             {
                 normal = Vector3.Cross(targetDir, Vector3.up);
@@ -130,7 +141,7 @@ namespace TexMotion.Editor.Motion
             }
             normal.Normalize();
 
-            // Calculate bend direction perpendicular to target line
+            // Calculate bend direction perpendicular to target line towards pole
             Vector3 bendDir = Vector3.Cross(normal, targetDir).normalized;
 
             // Desired mid position
@@ -150,7 +161,8 @@ namespace TexMotion.Editor.Motion
         }
 
         /// <summary>
-        /// Solves Two-Bone IK for limb joints and applies the delta rotations to local SMPL-X joint rotations.
+        /// Solves Two-Bone IK for limb joints and applies the delta rotations
+        /// properly transformed into parent local coordinate spaces.
         /// </summary>
         public static bool ApplyLimbIK(
             EditableMotionData data,
@@ -161,37 +173,72 @@ namespace TexMotion.Editor.Motion
             Vector3 targetWorldPos,
             Vector3 poleWorldPos)
         {
+            return ApplyLimbIK(data, frame, upperJoint, midJoint, endJoint, targetWorldPos, (Vector3?)poleWorldPos, true);
+        }
+
+        /// <summary>
+        /// Solves Two-Bone IK for limb joints and applies the delta rotations
+        /// properly transformed into parent local coordinate spaces.
+        /// If poleWorldPos is null or zero, preserves the natural bend direction of midJoint.
+        /// </summary>
+        public static bool ApplyLimbIK(
+            EditableMotionData data,
+            int frame,
+            SmplxJoint upperJoint,
+            SmplxJoint midJoint,
+            SmplxJoint endJoint,
+            Vector3 targetWorldPos,
+            Vector3? poleWorldPos = null,
+            bool recordUndo = true)
+        {
             if (data == null || frame < 0 || frame >= data.Frames) return false;
 
-            // Compute current world positions
+            // Compute current forward kinematics (positions and orientations)
             Vector3 rootPos = data.GetRootPosition(frame);
             int jointCount = SmplxJointDefinitions.JointCount;
             Quaternion[] locals = new Quaternion[jointCount];
             for (int j = 0; j < jointCount; j++) locals[j] = data.GetJointRotation(frame, (SmplxJoint)j);
 
-            Vector3[] fkPos = ComputeForwardKinematics(rootPos, locals);
+            ComputeForwardKinematics(rootPos, locals, out var worldPositions, out var worldRotations);
 
             int uIdx = (int)upperJoint;
             int mIdx = (int)midJoint;
             int eIdx = (int)endJoint;
 
-            Vector3 pUpper = fkPos[uIdx];
-            Vector3 pMid = fkPos[mIdx];
-            Vector3 pEnd = fkPos[eIdx];
+            Vector3 pUpper = worldPositions[uIdx];
+            Vector3 pMid = worldPositions[mIdx];
+            Vector3 pEnd = worldPositions[eIdx];
 
-            if (!SolveTwoBoneIK(pUpper, pMid, pEnd, targetWorldPos, poleWorldPos, out Quaternion rootDelta, out Quaternion midDelta))
+            // Default pole to current mid joint position to preserve natural bend plane
+            Vector3 effectivePole = poleWorldPos.HasValue && poleWorldPos.Value != Vector3.zero
+                ? poleWorldPos.Value
+                : pMid;
+
+            if (!SolveTwoBoneIK(pUpper, pMid, pEnd, targetWorldPos, effectivePole, out Quaternion rootDeltaRot, out Quaternion midDeltaRot))
             {
                 return false;
             }
 
-            // Apply deltas in parent transform space
-            data.RecordUndo($"IK on {endJoint} (Frame {frame})");
+            int upperParent = SmplxJointDefinitions.Parents[uIdx];
+            Quaternion parentWorld = upperParent >= 0 ? worldRotations[upperParent] : Quaternion.identity;
+            Quaternion curUpperWorld = worldRotations[uIdx];
+            Quaternion curMidWorld = worldRotations[mIdx];
 
-            Quaternion currUpper = data.GetJointRotation(frame, upperJoint);
-            data.SetJointRotation(frame, upperJoint, rootDelta * currUpper);
+            // 1. Calculate new Upper world rotation and convert to local space
+            Quaternion newUpperWorld = rootDeltaRot * curUpperWorld;
+            Quaternion newUpperLocal = Quaternion.Inverse(parentWorld) * newUpperWorld;
 
-            Quaternion currMid = data.GetJointRotation(frame, midJoint);
-            data.SetJointRotation(frame, midJoint, midDelta * currMid);
+            // 2. Calculate new Mid world rotation and convert to local space (relative to new Upper)
+            Quaternion newMidWorld = midDeltaRot * (rootDeltaRot * curMidWorld);
+            Quaternion newMidLocal = Quaternion.Inverse(newUpperWorld) * newMidWorld;
+
+            if (recordUndo)
+            {
+                data.RecordUndo($"IK on {endJoint} (Frame {frame})");
+            }
+
+            data.SetJointRotation(frame, upperJoint, newUpperLocal);
+            data.SetJointRotation(frame, midJoint, newMidLocal);
 
             return true;
         }

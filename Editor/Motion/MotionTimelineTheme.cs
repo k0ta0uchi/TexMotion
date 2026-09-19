@@ -55,7 +55,10 @@ namespace TexMotion.Editor.Motion
             SuccessBadge,
             WarningBadge,
             ErrorBadge,
-            InfoBadge
+            InfoBadge,
+            TabActive,
+            TabInactive,
+            SectionHeader
         }
 
         private struct TextureKey : IEquatable<TextureKey>
@@ -181,6 +184,9 @@ namespace TexMotion.Editor.Motion
         public static GUIStyle WarningBadge { get { return GetStyle(StyleRole.WarningBadge); } }
         public static GUIStyle ErrorBadge { get { return GetStyle(StyleRole.ErrorBadge); } }
         public static GUIStyle InfoBadge { get { return GetStyle(StyleRole.InfoBadge); } }
+        public static GUIStyle TabActive { get { return GetStyle(StyleRole.TabActive); } }
+        public static GUIStyle TabInactive { get { return GetStyle(StyleRole.TabInactive); } }
+        public static GUIStyle SectionHeader { get { return GetStyle(StyleRole.SectionHeader); } }
 
         /// <summary>
         /// Creates a style for a one-off control while reusing the cached surface
@@ -266,10 +272,22 @@ namespace TexMotion.Editor.Motion
                     return BuildStyle(EditorStyles.miniLabel, WithAlpha(CoralRed, 0.16f), CoralRed, 4, 4, TextAnchor.MiddleCenter, 10, 1);
                 case StyleRole.InfoBadge:
                     return BuildStyle(EditorStyles.miniLabel, WithAlpha(SignalTeal, 0.16f), SignalTeal, 4, 4, TextAnchor.MiddleCenter, 10, 1);
+                case StyleRole.TabActive:
+                    return BuildStyle(EditorStyles.label, Obsidian, Paper, 4, 8, TextAnchor.MiddleCenter, 12, 4);
+                case StyleRole.TabInactive:
+                    return BuildStyle(EditorStyles.label, Carbon, Fog, 4, 8, TextAnchor.MiddleCenter, 12, 4);
+                case StyleRole.SectionHeader:
+                    return BuildStyle(EditorStyles.boldLabel, Color.clear, Bone, 0, 0, TextAnchor.MiddleLeft, 12);
                 case StyleRole.Badge:
                 default:
                     return BuildStyle(EditorStyles.miniLabel, WithAlpha(Color.white, 0.05f), Fog, 4, 4, TextAnchor.MiddleCenter, 10, 1);
             }
+        }
+
+        /// <summary>Draws a 1-pixel hairline border or separator using Graphite or custom color.</summary>
+        public static void DrawHairline(Rect rect, Color color)
+        {
+            EditorGUI.DrawRect(rect, color);
         }
 
         private static GUIStyle BuildStyle(

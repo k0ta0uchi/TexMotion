@@ -409,51 +409,32 @@ namespace TexMotion.Editor.Motion
             // Apply 2-Bone IK toward smoothed targets
             for (int t = startFrame; t <= endFrame; t++)
             {
-                for (int j = 0; j < jointCount; j++) curRots[j] = data.LocalRotations[t, j];
-                Vector3[] fk = MotionIkUtility.ComputeForwardKinematics(data.RootPositions[t], curRots);
-
                 // Left Arm
                 if (BodyPartMaskUtility.IsJointInMask(SmplxJoint.L_Wrist, mask))
                 {
                     Vector3 target = Vector3.Lerp(lWristPath[t], smoothLW[t], blendWeight);
-                    if (MotionIkUtility.SolveTwoBoneIK(fk[(int)SmplxJoint.L_Shoulder], fk[(int)SmplxJoint.L_Elbow], fk[(int)SmplxJoint.L_Wrist], target, Vector3.back, out var dSh, out var dEl))
-                    {
-                        data.LocalRotations[t, (int)SmplxJoint.L_Shoulder] = dSh * data.LocalRotations[t, (int)SmplxJoint.L_Shoulder];
-                        data.LocalRotations[t, (int)SmplxJoint.L_Elbow] = dEl * data.LocalRotations[t, (int)SmplxJoint.L_Elbow];
-                    }
+                    MotionIkUtility.ApplyLimbIK(data, t, SmplxJoint.L_Shoulder, SmplxJoint.L_Elbow, SmplxJoint.L_Wrist, target, null, false);
                 }
 
                 // Right Arm
                 if (BodyPartMaskUtility.IsJointInMask(SmplxJoint.R_Wrist, mask))
                 {
                     Vector3 target = Vector3.Lerp(rWristPath[t], smoothRW[t], blendWeight);
-                    if (MotionIkUtility.SolveTwoBoneIK(fk[(int)SmplxJoint.R_Shoulder], fk[(int)SmplxJoint.R_Elbow], fk[(int)SmplxJoint.R_Wrist], target, Vector3.back, out var dSh, out var dEl))
-                    {
-                        data.LocalRotations[t, (int)SmplxJoint.R_Shoulder] = dSh * data.LocalRotations[t, (int)SmplxJoint.R_Shoulder];
-                        data.LocalRotations[t, (int)SmplxJoint.R_Elbow] = dEl * data.LocalRotations[t, (int)SmplxJoint.R_Elbow];
-                    }
+                    MotionIkUtility.ApplyLimbIK(data, t, SmplxJoint.R_Shoulder, SmplxJoint.R_Elbow, SmplxJoint.R_Wrist, target, null, false);
                 }
 
                 // Left Leg
                 if (BodyPartMaskUtility.IsJointInMask(SmplxJoint.L_Ankle, mask))
                 {
                     Vector3 target = Vector3.Lerp(lAnklePath[t], smoothLA[t], blendWeight);
-                    if (MotionIkUtility.SolveTwoBoneIK(fk[(int)SmplxJoint.L_Hip], fk[(int)SmplxJoint.L_Knee], fk[(int)SmplxJoint.L_Ankle], target, Vector3.forward, out var dHip, out var dKnee))
-                    {
-                        data.LocalRotations[t, (int)SmplxJoint.L_Hip] = dHip * data.LocalRotations[t, (int)SmplxJoint.L_Hip];
-                        data.LocalRotations[t, (int)SmplxJoint.L_Knee] = dKnee * data.LocalRotations[t, (int)SmplxJoint.L_Knee];
-                    }
+                    MotionIkUtility.ApplyLimbIK(data, t, SmplxJoint.L_Hip, SmplxJoint.L_Knee, SmplxJoint.L_Ankle, target, null, false);
                 }
 
                 // Right Leg
                 if (BodyPartMaskUtility.IsJointInMask(SmplxJoint.R_Ankle, mask))
                 {
                     Vector3 target = Vector3.Lerp(rAnklePath[t], smoothRA[t], blendWeight);
-                    if (MotionIkUtility.SolveTwoBoneIK(fk[(int)SmplxJoint.R_Hip], fk[(int)SmplxJoint.R_Knee], fk[(int)SmplxJoint.R_Ankle], target, Vector3.forward, out var dHip, out var dKnee))
-                    {
-                        data.LocalRotations[t, (int)SmplxJoint.R_Hip] = dHip * data.LocalRotations[t, (int)SmplxJoint.R_Hip];
-                        data.LocalRotations[t, (int)SmplxJoint.R_Knee] = dKnee * data.LocalRotations[t, (int)SmplxJoint.R_Knee];
-                    }
+                    MotionIkUtility.ApplyLimbIK(data, t, SmplxJoint.R_Hip, SmplxJoint.R_Knee, SmplxJoint.R_Ankle, target, null, false);
                 }
             }
         }

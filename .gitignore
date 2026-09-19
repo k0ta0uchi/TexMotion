@@ -8,10 +8,15 @@
 [Uu]ser[Ss]ettings/
 [Mm]emoryCaptures/
 Recordings/
+sysinfo.txt
+*.stackdump
+crash*.dmp
 
 # Visual Studio / Rider / VSCode
 .vs/
 .idea/
+.vscode/
+*.code-workspace
 *.csproj
 *.unityproj
 *.sln
@@ -35,7 +40,7 @@ ehthumbs.db
 Thumbs.db
 [Dd]esktop.ini
 
-# Python runtime & byte-code
+# Python runtime, linters & byte-code
 __pycache__/
 **/__pycache__/
 *.py[cod]
@@ -48,8 +53,18 @@ __pycache__.meta
 .pytest_cache/
 **/.pytest_cache/
 **/.pytest_cache.meta
+.ruff_cache/
+**/.ruff_cache/
+**/.ruff_cache.meta
+.uv/
+**/.uv/
+**/.uv.meta
 .texmotion-venv/
+**/.texmotion-venv/
+**/.texmotion-venv.meta
 .texmotion-uv-cache/
+**/.texmotion-uv-cache/
+**/.texmotion-uv-cache.meta
 
 # Cache, feature archives & numpy dumps
 *.npz
@@ -74,7 +89,9 @@ __pycache__.meta
 # Temporary, test, and workflow files
 .gemini_workflow/
 scratch/
+scratch.meta
 *.tmp
+*.tmp.meta
 *.log
 *.log.meta
 test_*.json

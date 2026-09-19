@@ -875,9 +875,11 @@ namespace TexMotion.Editor.Motion
         }
 
         /// <summary>
-        /// Clamps foot heights so neither ankle nor foot dips below the floor (groundY).
+        /// <summary>
+        /// Clamps or snaps foot heights to the floor plane (groundY).
+        /// If snapFloating is true, feet above the ground are lowered to contact groundY.
         /// </summary>
-        public bool ApplyFootGrounding(int startFrame, int endFrame, float groundY = 0f, float ankleGroundOffset = 0.08f)
+        public bool ApplyFootGrounding(int startFrame, int endFrame, float groundY = 0f, float ankleGroundOffset = 0.05f, bool snapFloating = true)
         {
             if (startFrame < 0 || endFrame >= Frames || startFrame > endFrame) return false;
 
@@ -899,11 +901,11 @@ namespace TexMotion.Editor.Motion
                 float rAnkY = fkPos[(int)SmplxJoint.R_Ankle].y - ankleGroundOffset;
 
                 float lowestPoint = Mathf.Min(Mathf.Min(lFootY, rFootY), Mathf.Min(lAnkY, rAnkY));
+                float diff = groundY - lowestPoint;
 
-                if (lowestPoint < groundY)
+                if (diff > 0.0005f || (snapFloating && Mathf.Abs(diff) > 0.0005f))
                 {
-                    float penetration = groundY - lowestPoint;
-                    RootPositions[t] = new Vector3(rootPos.x, rootPos.y + penetration, rootPos.z);
+                    RootPositions[t] = new Vector3(rootPos.x, rootPos.y + diff, rootPos.z);
                     _modifiedFrames.Add(t);
                 }
             }
@@ -911,9 +913,54 @@ namespace TexMotion.Editor.Motion
             return true;
         }
 
-        public bool ApplyFootGrounding(int frame, float groundY = 0f)
+        public bool ApplyFootGrounding(int frame, float groundY = 0f, float ankleGroundOffset = 0.05f, bool snapFloating = true)
         {
-            return ApplyFootGrounding(frame, frame, groundY);
+            return ApplyFootGrounding(frame, frame, groundY, ankleGroundOffset, snapFloating);
+        }
+
+        /// <summary>
+        /// Offsets the entire motion clip vertically so the lowest foot contact across all frames lands exactly on groundY.
+        /// Preserves all relative jumping and running dynamics while anchoring the lowest point to the ground.
+        /// </summary>
+        public bool GroundEntireClip(float groundY = 0f, float ankleGroundOffset = 0.05f)
+        {
+            if (Frames <= 0) return false;
+
+            RecordUndo($"Ground Entire Clip (Ground={groundY:F2}m)");
+
+            int jointCount = SmplxJointDefinitions.JointCount;
+            Quaternion[] locals = new Quaternion[jointCount];
+            float globalLowest = float.MaxValue;
+
+            for (int t = 0; t < Frames; t++)
+            {
+                Vector3 rootPos = RootPositions[t];
+                for (int j = 0; j < jointCount; j++) locals[j] = LocalRotations[t, j];
+
+                Vector3[] fkPos = MotionIkUtility.ComputeForwardKinematics(rootPos, locals);
+                float lFootY = fkPos[(int)SmplxJoint.L_Foot].y;
+                float rFootY = fkPos[(int)SmplxJoint.R_Foot].y;
+                float lAnkY = fkPos[(int)SmplxJoint.L_Ankle].y - ankleGroundOffset;
+                float rAnkY = fkPos[(int)SmplxJoint.R_Ankle].y - ankleGroundOffset;
+
+                float frameLowest = Mathf.Min(Mathf.Min(lFootY, rFootY), Mathf.Min(lAnkY, rAnkY));
+                if (frameLowest < globalLowest) globalLowest = frameLowest;
+            }
+
+            if (globalLowest != float.MaxValue)
+            {
+                float verticalShift = groundY - globalLowest;
+                if (Mathf.Abs(verticalShift) > 0.0005f)
+                {
+                    for (int t = 0; t < Frames; t++)
+                    {
+                        RootPositions[t] = new Vector3(RootPositions[t].x, RootPositions[t].y + verticalShift, RootPositions[t].z);
+                        _modifiedFrames.Add(t);
+                    }
+                }
+            }
+
+            return true;
         }
 
         /// <summary>
