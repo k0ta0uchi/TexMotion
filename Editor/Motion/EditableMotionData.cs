@@ -342,15 +342,20 @@ namespace TexMotion.Editor.Motion
         }
 
         /// <summary>
-        /// Pastes clipboard pose to the specified frame.
+        /// Pastes clipboard pose to the specified frame with body part masking.
         /// </summary>
         public bool PasteFramePose(int frame, bool includeRootPosition = true)
         {
+            return PasteFramePose(frame, BodyPartMask.All, includeRootPosition);
+        }
+
+        public bool PasteFramePose(int frame, BodyPartMask mask, bool includeRootPosition = true)
+        {
             if (!HasClipboardData || frame < 0 || frame >= Frames) return false;
 
-            RecordUndo($"Paste Pose to Frame {frame}");
+            RecordUndo($"Paste Pose to Frame {frame} ({mask})");
 
-            if (includeRootPosition && _clipboardRootPos.HasValue)
+            if (includeRootPosition && _clipboardRootPos.HasValue && (mask & BodyPartMask.Pelvis) != 0)
             {
                 RootPositions[frame] = _clipboardRootPos.Value;
             }
@@ -358,6 +363,9 @@ namespace TexMotion.Editor.Motion
             int jointCount = SmplxJointDefinitions.JointCount;
             for (int j = 0; j < jointCount; j++)
             {
+                SmplxJoint joint = (SmplxJoint)j;
+                if (!BodyPartMaskUtility.ContainsJoint(mask, joint)) continue;
+
                 LocalRotations[frame, j] = _clipboardRotations[j];
             }
 
@@ -370,18 +378,33 @@ namespace TexMotion.Editor.Motion
         /// </summary>
         public void ResetFrameToOriginal(int frame)
         {
+            ResetFrameToOriginal(frame, BodyPartMask.All);
+        }
+
+        public void ResetFrameToOriginal(int frame, BodyPartMask mask)
+        {
             if (frame < 0 || frame >= Frames) return;
 
-            RecordUndo($"Reset Frame {frame} to Original");
+            RecordUndo($"Reset Frame {frame} ({mask}) to Original");
 
-            RootPositions[frame] = _originalRootPositions[frame];
+            if ((mask & BodyPartMask.Pelvis) != 0)
+            {
+                RootPositions[frame] = _originalRootPositions[frame];
+            }
+
             int jointCount = SmplxJointDefinitions.JointCount;
             for (int j = 0; j < jointCount; j++)
             {
+                SmplxJoint joint = (SmplxJoint)j;
+                if (!BodyPartMaskUtility.ContainsJoint(mask, joint)) continue;
+
                 LocalRotations[frame, j] = _originalLocalRotations[frame, j];
             }
 
-            _modifiedFrames.Remove(frame);
+            if (mask == BodyPartMask.All)
+            {
+                _modifiedFrames.Remove(frame);
+            }
         }
 
         /// <summary>
@@ -422,21 +445,32 @@ namespace TexMotion.Editor.Motion
         /// </summary>
         public bool SmoothFrame(int frame, float blendWeight = 0.5f)
         {
+            return SmoothFrame(frame, BodyPartMask.All, blendWeight);
+        }
+
+        public bool SmoothFrame(int frame, BodyPartMask mask, float blendWeight = 0.5f)
+        {
             if (frame <= 0 || frame >= Frames - 1) return false;
 
-            RecordUndo($"Smooth Frame {frame}");
+            RecordUndo($"Smooth Frame {frame} ({mask})");
 
             int prev = frame - 1;
             int next = frame + 1;
 
             // Blend Root Position
-            Vector3 targetRoot = Vector3.Lerp(RootPositions[prev], RootPositions[next], blendWeight);
-            RootPositions[frame] = Vector3.Lerp(RootPositions[frame], targetRoot, 0.7f);
+            if ((mask & BodyPartMask.Pelvis) != 0)
+            {
+                Vector3 targetRoot = Vector3.Lerp(RootPositions[prev], RootPositions[next], blendWeight);
+                RootPositions[frame] = Vector3.Lerp(RootPositions[frame], targetRoot, 0.7f);
+            }
 
             // Blend 22 Joints
             int jointCount = SmplxJointDefinitions.JointCount;
             for (int j = 0; j < jointCount; j++)
             {
+                SmplxJoint joint = (SmplxJoint)j;
+                if (!BodyPartMaskUtility.ContainsJoint(mask, joint)) continue;
+
                 Quaternion qPrev = LocalRotations[prev, j];
                 Quaternion qNext = LocalRotations[next, j];
                 if (Quaternion.Dot(qPrev, qNext) < 0f)
@@ -543,6 +577,417 @@ namespace TexMotion.Editor.Motion
             }
 
             _modifiedFrames.Add(frame);
+        }
+
+        #endregion
+
+        #region Advanced Pose Operations
+
+        /// <summary>
+        /// Interpolates / tweens a range of frames between startFrame and endFrame using the specified easing curve and body mask.
+        /// </summary>
+        public bool TweenRange(
+            int startFrame,
+            int endFrame,
+            EasingType easing = EasingType.EaseInOut,
+            BodyPartMask mask = BodyPartMask.All,
+            bool includeRoot = true)
+        {
+            if (startFrame < 0 || endFrame >= Frames || endFrame - startFrame < 2)
+                return false;
+
+            RecordUndo($"Tween Range [{startFrame}..{endFrame}] ({easing}, {mask})");
+
+            int span = endFrame - startFrame;
+            int jointCount = SmplxJointDefinitions.JointCount;
+
+            Vector3 startRoot = RootPositions[startFrame];
+            Vector3 endRoot = RootPositions[endFrame];
+
+            for (int t = startFrame + 1; t < endFrame; t++)
+            {
+                float linearT = (float)(t - startFrame) / span;
+                float easedT = BodyPartMaskUtility.EvaluateEasing(easing, linearT);
+
+                if (includeRoot && (mask & BodyPartMask.Pelvis) != 0)
+                {
+                    RootPositions[t] = Vector3.Lerp(startRoot, endRoot, easedT);
+                }
+
+                for (int j = 0; j < jointCount; j++)
+                {
+                    SmplxJoint joint = (SmplxJoint)j;
+                    if (!BodyPartMaskUtility.ContainsJoint(mask, joint)) continue;
+
+                    Quaternion qStart = LocalRotations[startFrame, j];
+                    Quaternion qEnd = LocalRotations[endFrame, j];
+
+                    if (Quaternion.Dot(qStart, qEnd) < 0f)
+                    {
+                        qEnd = new Quaternion(-qEnd.x, -qEnd.y, -qEnd.z, -qEnd.w);
+                    }
+
+                    LocalRotations[t, j] = Quaternion.Slerp(qStart, qEnd, easedT);
+                }
+
+                _modifiedFrames.Add(t);
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Smoothly transitions the trailing frames back to frame 0 for seamless loop playback.
+        /// </summary>
+        public bool BlendLoopBoundary(
+            int blendFrames = 10,
+            BodyPartMask mask = BodyPartMask.All,
+            bool matchRoot = true)
+        {
+            if (Frames < 4) return false;
+
+            blendFrames = Mathf.Clamp(blendFrames, 2, Frames / 2);
+            RecordUndo($"Loop Boundary Blend ({blendFrames} frames, {mask})");
+
+            int startBlend = Frames - blendFrames;
+            int jointCount = SmplxJointDefinitions.JointCount;
+
+            Vector3 root0 = RootPositions[0];
+
+            for (int t = startBlend; t < Frames; t++)
+            {
+                int k = t - startBlend;
+                float linearT = (float)(k + 1) / (blendFrames + 1);
+                float weight = BodyPartMaskUtility.EvaluateEasing(EasingType.SmoothStep, linearT);
+
+                if (matchRoot && (mask & BodyPartMask.Pelvis) != 0)
+                {
+                    // If InPlace, blend X and Z, and maintain continuous height Y
+                    Vector3 currentRoot = RootPositions[t];
+                    Vector3 targetRoot = new Vector3(root0.x, root0.y, InPlace ? root0.z : currentRoot.z);
+                    RootPositions[t] = Vector3.Lerp(currentRoot, targetRoot, weight);
+                }
+
+                for (int j = 0; j < jointCount; j++)
+                {
+                    SmplxJoint joint = (SmplxJoint)j;
+                    if (!BodyPartMaskUtility.ContainsJoint(mask, joint)) continue;
+
+                    Quaternion qCurr = LocalRotations[t, j];
+                    Quaternion q0 = LocalRotations[0, j];
+
+                    if (Quaternion.Dot(qCurr, q0) < 0f)
+                    {
+                        q0 = new Quaternion(-q0.x, -q0.y, -q0.z, -q0.w);
+                    }
+
+                    LocalRotations[t, j] = Quaternion.Slerp(qCurr, q0, weight);
+                }
+
+                _modifiedFrames.Add(t);
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Applies relative additive offsets to root position and joint euler rotations across a frame range,
+        /// with optional edge falloff fading.
+        /// </summary>
+        public bool ApplyRangeOffset(
+            int startFrame,
+            int endFrame,
+            Vector3 rootOffset,
+            Dictionary<SmplxJoint, Vector3> eulerOffsets,
+            bool fadeEdges = true)
+        {
+            if (startFrame < 0 || endFrame >= Frames || startFrame > endFrame) return false;
+
+            RecordUndo($"Apply Range Offset [{startFrame}..{endFrame}]");
+
+            int span = Mathf.Max(1, endFrame - startFrame);
+            float fadeLength = fadeEdges ? Mathf.Max(1f, span * 0.15f) : 0f;
+
+            for (int t = startFrame; t <= endFrame; t++)
+            {
+                float weight = 1.0f;
+                if (fadeEdges && span > 2)
+                {
+                    float distFromStart = t - startFrame;
+                    float distFromEnd = endFrame - t;
+                    float minDist = Mathf.Min(distFromStart, distFromEnd);
+                    if (minDist < fadeLength)
+                    {
+                        weight = BodyPartMaskUtility.EvaluateEasing(EasingType.SmoothStep, minDist / fadeLength);
+                    }
+                }
+
+                if (rootOffset != Vector3.zero)
+                {
+                    RootPositions[t] += rootOffset * weight;
+                }
+
+                if (eulerOffsets != null && eulerOffsets.Count > 0)
+                {
+                    foreach (var kvp in eulerOffsets)
+                    {
+                        SmplxJoint joint = kvp.Key;
+                        Vector3 deltaEuler = kvp.Value * weight;
+                        Quaternion curRot = LocalRotations[t, (int)joint];
+                        Quaternion deltaRot = Quaternion.Euler(deltaEuler.x, deltaEuler.y, deltaEuler.z);
+                        LocalRotations[t, (int)joint] = curRot * deltaRot;
+                    }
+                }
+
+                _modifiedFrames.Add(t);
+            }
+
+            return true;
+        }
+
+        public bool ApplyRangeOffset(
+            int startFrame,
+            int endFrame,
+            Vector3 rootOffset,
+            Vector3 armEulerOffset,
+            bool fadeEdges = true)
+        {
+            var eulers = new Dictionary<SmplxJoint, Vector3>();
+            if (armEulerOffset != Vector3.zero)
+            {
+                eulers[SmplxJoint.L_Shoulder] = new Vector3(armEulerOffset.x, armEulerOffset.y, armEulerOffset.z);
+                eulers[SmplxJoint.R_Shoulder] = new Vector3(armEulerOffset.x, armEulerOffset.y, -armEulerOffset.z);
+            }
+            return ApplyRangeOffset(startFrame, endFrame, rootOffset, eulers, fadeEdges);
+        }
+
+        /// <summary>
+        /// Retimes (stretches or compresses) the specified frame range [startFrame, endFrame]
+        /// into a new duration (newFrameCount), resampling poses via Slerp.
+        /// </summary>
+        public bool RetimeRange(int startFrame, int endFrame, int newFrameCount)
+        {
+            if (startFrame < 0 || endFrame >= Frames || startFrame >= endFrame || newFrameCount < 2)
+                return false;
+
+            int oldRangeCount = endFrame - startFrame + 1;
+            int newTotalFrames = Frames - oldRangeCount + newFrameCount;
+            if (newTotalFrames < 3) return false;
+
+            RecordUndo($"Retime Range [{startFrame}..{endFrame}] ({oldRangeCount} -> {newFrameCount} frames)");
+
+            int jointCount = SmplxJointDefinitions.JointCount;
+            var newRoots = new Vector3[newTotalFrames];
+            var newRotations = new Quaternion[newTotalFrames, jointCount];
+            var newTimestamps = new float[newTotalFrames];
+
+            // 1. Copy frames before startFrame
+            for (int i = 0; i < startFrame; i++)
+            {
+                newRoots[i] = RootPositions[i];
+                for (int j = 0; j < jointCount; j++) newRotations[i, j] = LocalRotations[i, j];
+                newTimestamps[i] = (float)i / FrameRate;
+            }
+
+            // 2. Resample the retimed range
+            for (int k = 0; k < newFrameCount; k++)
+            {
+                int targetIdx = startFrame + k;
+                float progress = (float)k / (newFrameCount - 1);
+                float sampleFrameExact = startFrame + (progress * (oldRangeCount - 1));
+
+                int f0 = Mathf.FloorToInt(sampleFrameExact);
+                int f1 = Mathf.Min(f0 + 1, endFrame);
+                float frac = sampleFrameExact - f0;
+
+                newRoots[targetIdx] = Vector3.Lerp(RootPositions[f0], RootPositions[f1], frac);
+
+                for (int j = 0; j < jointCount; j++)
+                {
+                    Quaternion q0 = LocalRotations[f0, j];
+                    Quaternion q1 = LocalRotations[f1, j];
+                    if (Quaternion.Dot(q0, q1) < 0f)
+                    {
+                        q1 = new Quaternion(-q1.x, -q1.y, -q1.z, -q1.w);
+                    }
+                    newRotations[targetIdx, j] = Quaternion.Slerp(q0, q1, frac);
+                }
+
+                newTimestamps[targetIdx] = (float)targetIdx / FrameRate;
+            }
+
+            // 3. Copy frames after endFrame
+            int tailOffset = newTotalFrames - (Frames - 1 - endFrame);
+            for (int i = endFrame + 1; i < Frames; i++)
+            {
+                int targetIdx = startFrame + newFrameCount + (i - (endFrame + 1));
+                newRoots[targetIdx] = RootPositions[i];
+                for (int j = 0; j < jointCount; j++) newRotations[targetIdx, j] = LocalRotations[i, j];
+                newTimestamps[targetIdx] = (float)targetIdx / FrameRate;
+            }
+
+            // Apply new arrays
+            Frames = newTotalFrames;
+            RootPositions = newRoots;
+            LocalRotations = newRotations;
+            Timestamps = newTimestamps;
+
+            _modifiedFrames.Clear();
+            for (int i = startFrame; i < startFrame + newFrameCount; i++)
+            {
+                _modifiedFrames.Add(i);
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Prevents upper arms from penetrating the avatar's chest/torso by clamping the minimum armpit opening angle.
+        /// </summary>
+        public bool ApplyArmpitPenetrationLimiter(int startFrame, int endFrame, float minArmpitAngleDeg = 20.0f)
+        {
+            if (startFrame < 0 || endFrame >= Frames || startFrame > endFrame) return false;
+
+            RecordUndo($"Armpit Penetration Limiter ({minArmpitAngleDeg}°)");
+
+            for (int t = startFrame; t <= endFrame; t++)
+            {
+                // Left Shoulder: clamp roll/adduction away from negative Y / positive X
+                Vector3 lEuler = GetJointEuler(t, SmplxJoint.L_Shoulder);
+                if (Mathf.Abs(lEuler.z) < minArmpitAngleDeg)
+                {
+                    lEuler.z = Mathf.Sign(lEuler.z == 0 ? -1f : lEuler.z) * minArmpitAngleDeg;
+                    SetJointEuler(t, SmplxJoint.L_Shoulder, lEuler);
+                }
+
+                // Right Shoulder
+                Vector3 rEuler = GetJointEuler(t, SmplxJoint.R_Shoulder);
+                if (Mathf.Abs(rEuler.z) < minArmpitAngleDeg)
+                {
+                    rEuler.z = Mathf.Sign(rEuler.z == 0 ? 1f : rEuler.z) * minArmpitAngleDeg;
+                    SetJointEuler(t, SmplxJoint.R_Shoulder, rEuler);
+                }
+
+                _modifiedFrames.Add(t);
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Clamps foot heights so neither ankle nor foot dips below the floor (groundY).
+        /// </summary>
+        public bool ApplyFootGrounding(int startFrame, int endFrame, float groundY = 0f, float ankleGroundOffset = 0.08f)
+        {
+            if (startFrame < 0 || endFrame >= Frames || startFrame > endFrame) return false;
+
+            RecordUndo($"Foot Grounding [F{startFrame}..F{endFrame}] (Ground={groundY:F2}m)");
+
+            int jointCount = SmplxJointDefinitions.JointCount;
+            Quaternion[] locals = new Quaternion[jointCount];
+
+            for (int t = startFrame; t <= endFrame; t++)
+            {
+                Vector3 rootPos = RootPositions[t];
+                for (int j = 0; j < jointCount; j++) locals[j] = LocalRotations[t, j];
+
+                Vector3[] fkPos = MotionIkUtility.ComputeForwardKinematics(rootPos, locals);
+
+                float lFootY = fkPos[(int)SmplxJoint.L_Foot].y;
+                float rFootY = fkPos[(int)SmplxJoint.R_Foot].y;
+                float lAnkY = fkPos[(int)SmplxJoint.L_Ankle].y - ankleGroundOffset;
+                float rAnkY = fkPos[(int)SmplxJoint.R_Ankle].y - ankleGroundOffset;
+
+                float lowestPoint = Mathf.Min(Mathf.Min(lFootY, rFootY), Mathf.Min(lAnkY, rAnkY));
+
+                if (lowestPoint < groundY)
+                {
+                    float penetration = groundY - lowestPoint;
+                    RootPositions[t] = new Vector3(rootPos.x, rootPos.y + penetration, rootPos.z);
+                    _modifiedFrames.Add(t);
+                }
+            }
+
+            return true;
+        }
+
+        public bool ApplyFootGrounding(int frame, float groundY = 0f)
+        {
+            return ApplyFootGrounding(frame, frame, groundY);
+        }
+
+        /// <summary>
+        /// Locks foot positions to prevent sliding during a contact range by solving inverse kinematics.
+        /// </summary>
+        public bool LockFootPosition(int startFrame, int endFrame, bool lockLeft = true, bool lockRight = false)
+        {
+            if (startFrame < 0 || endFrame >= Frames || startFrame >= endFrame) return false;
+
+            RecordUndo($"Lock Foot Position [F{startFrame}..F{endFrame}]");
+
+            int jointCount = SmplxJointDefinitions.JointCount;
+            Quaternion[] baseLocals = new Quaternion[jointCount];
+            for (int j = 0; j < jointCount; j++) baseLocals[j] = LocalRotations[startFrame, j];
+
+            Vector3[] baseFk = MotionIkUtility.ComputeForwardKinematics(RootPositions[startFrame], baseLocals);
+            Vector3 targetLAnkle = baseFk[(int)SmplxJoint.L_Ankle];
+            Vector3 targetRAnkle = baseFk[(int)SmplxJoint.R_Ankle];
+
+            for (int t = startFrame + 1; t <= endFrame; t++)
+            {
+                if (lockLeft)
+                {
+                    MotionIkUtility.ApplyLimbIK(this, t, SmplxJoint.L_Hip, SmplxJoint.L_Knee, SmplxJoint.L_Ankle, targetLAnkle, targetLAnkle + Vector3.forward);
+                }
+
+                if (lockRight)
+                {
+                    MotionIkUtility.ApplyLimbIK(this, t, SmplxJoint.R_Hip, SmplxJoint.R_Knee, SmplxJoint.R_Ankle, targetRAnkle, targetRAnkle + Vector3.forward);
+                }
+
+                _modifiedFrames.Add(t);
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Solves Two-Bone IK on the active frame for the specified end joint (L/R Wrist, L/R Ankle).
+        /// </summary>
+        public bool ApplyTwoBoneIK(int frame, SmplxJoint endJoint, Vector3 targetWorldPos, Vector3 poleWorldPos)
+        {
+            if (frame < 0 || frame >= Frames) return false;
+
+            SmplxJoint upperJoint;
+            SmplxJoint midJoint;
+
+            switch (endJoint)
+            {
+                case SmplxJoint.L_Wrist:
+                    upperJoint = SmplxJoint.L_Shoulder;
+                    midJoint = SmplxJoint.L_Elbow;
+                    break;
+                case SmplxJoint.R_Wrist:
+                    upperJoint = SmplxJoint.R_Shoulder;
+                    midJoint = SmplxJoint.R_Elbow;
+                    break;
+                case SmplxJoint.L_Ankle:
+                case SmplxJoint.L_Foot:
+                    upperJoint = SmplxJoint.L_Hip;
+                    midJoint = SmplxJoint.L_Knee;
+                    endJoint = SmplxJoint.L_Ankle;
+                    break;
+                case SmplxJoint.R_Ankle:
+                case SmplxJoint.R_Foot:
+                    upperJoint = SmplxJoint.R_Hip;
+                    midJoint = SmplxJoint.R_Knee;
+                    endJoint = SmplxJoint.R_Ankle;
+                    break;
+                default:
+                    return false;
+            }
+
+            return MotionIkUtility.ApplyLimbIK(this, frame, upperJoint, midJoint, endJoint, targetWorldPos, poleWorldPos);
         }
 
         #endregion

@@ -129,6 +129,34 @@ namespace TexMotion.Editor.Motion
         // Secondary pose operations are available on demand so the joint inspector stays compact.
         private bool _foldoutTools = false;
 
+        // Advanced Pose Correction State
+        private bool _foldoutAdvancedTools = true;
+        private BodyPartMask _selectedBodyMask = BodyPartMask.All;
+        private int _rangeStartFrame = 0;
+        private int _rangeEndFrame = 10;
+        private EasingType _selectedEasing = EasingType.EaseInOut;
+        private int _loopBlendFrames = 10;
+        private float _armpitLimitAngle = 20.0f;
+        private float _groundPlaneY = 0.0f;
+        private Vector3 _additiveRootOffset = Vector3.zero;
+        private Vector3 _additiveArmEulerOffset = Vector3.zero;
+        private bool _offsetFadeEdges = true;
+        private int _retimeNewFrameCount = 15;
+
+        // Visual Features
+        private bool _enableOnionSkin = false;
+        private bool _enableIkPins = false;
+        private SmplxJoint? _activeIkJoint = null;
+        private bool _isDraggingIk = false;
+        private Vector2 _ikDragStartMouse;
+        private Vector3 _ikDragStartPos;
+
+        // Pose Palette & Glitch Detector
+        private readonly PosePalette _posePalette = new PosePalette();
+        private int _selectedPaletteSlot = 0;
+        private float _paletteBlendWeight = 1.0f;
+        private List<GlitchInfo> _detectedGlitches = new List<GlitchInfo>();
+
         // GUI Styles
         private GUIStyle _topBarStyle;
         private GUIStyle _panelStyle;
@@ -712,6 +740,16 @@ namespace TexMotion.Editor.Motion
                     // Overlay Skeleton and 3D Rotation Gizmos (Blender Pose Mode)
                     DrawSkeletonOverlay(rect, _previewUtility.camera);
                     DrawBoneGizmo(rect, _previewUtility.camera);
+
+                    if (_enableOnionSkin)
+                    {
+                        DrawOnionSkinOverlay(rect, _previewUtility.camera);
+                    }
+
+                    if (_enableIkPins)
+                    {
+                        DrawIkPinsOverlay(rect, _previewUtility.camera);
+                    }
                 }
                 else
                 {
@@ -806,6 +844,153 @@ namespace TexMotion.Editor.Motion
                         Handles.color = new Color(1.0f, 0.88f, 0.2f, 0.75f);
                         Handles.DrawWireDisc(new Vector3(pt.x, pt.y, 0), Vector3.forward, radius + 3.5f);
                     }
+                }
+            }
+
+            Handles.EndGUI();
+        }
+
+        private void DrawOnionSkinOverlay(Rect rect, Camera cam)
+        {
+            if (_data == null || cam == null) return;
+
+            Handles.BeginGUI();
+
+            int jointCount = SmplxJointDefinitions.JointCount;
+            Quaternion[] locals = new Quaternion[jointCount];
+
+            // 1. Draw Previous Frame (Cyan)
+            if (_currentFrame > 0)
+            {
+                int prevFrame = _currentFrame - 1;
+                Vector3 prevRoot = _data.GetRootPosition(prevFrame);
+                for (int j = 0; j < jointCount; j++) locals[j] = _data.GetJointRotation(prevFrame, (SmplxJoint)j);
+                Vector3[] prevFk = MotionIkUtility.ComputeForwardKinematics(prevRoot, locals);
+
+                Color prevColor = new Color(0.0f, 0.85f, 1.0f, 0.45f);
+                DrawGhostBones(rect, cam, prevFk, prevColor, 2.0f);
+            }
+
+            // 2. Draw Next Frame (Magenta)
+            if (_currentFrame < _data.Frames - 1)
+            {
+                int nextFrame = _currentFrame + 1;
+                Vector3 nextRoot = _data.GetRootPosition(nextFrame);
+                for (int j = 0; j < jointCount; j++) locals[j] = _data.GetJointRotation(nextFrame, (SmplxJoint)j);
+                Vector3[] nextFk = MotionIkUtility.ComputeForwardKinematics(nextRoot, locals);
+
+                Color nextColor = new Color(1.0f, 0.2f, 0.75f, 0.45f);
+                DrawGhostBones(rect, cam, nextFk, nextColor, 2.0f);
+            }
+
+            Handles.EndGUI();
+        }
+
+        private void DrawGhostBones(Rect rect, Camera cam, Vector3[] fkPositions, Color color, float lineWidth)
+        {
+            Handles.color = color;
+            foreach (var (parentJoint, childJoint) in BoneConnections)
+            {
+                Vector3 p1World = fkPositions[(int)parentJoint];
+                Vector3 p2World = fkPositions[(int)childJoint];
+                if (TryWorldToScreen(cam, rect, p1World, out Vector2 p1) &&
+                    TryWorldToScreen(cam, rect, p2World, out Vector2 p2))
+                {
+                    Handles.DrawAAPolyLine(lineWidth, new Vector3(p1.x, p1.y, 0), new Vector3(p2.x, p2.y, 0));
+                }
+            }
+
+            // Ghost key joint discs
+            SmplxJoint[] markerJoints = new[] { SmplxJoint.L_Wrist, SmplxJoint.R_Wrist, SmplxJoint.L_Ankle, SmplxJoint.R_Ankle, SmplxJoint.Head };
+            foreach (var joint in markerJoints)
+            {
+                Vector3 pos = fkPositions[(int)joint];
+                if (TryWorldToScreen(cam, rect, pos, out Vector2 pt))
+                {
+                    Handles.DrawSolidDisc(new Vector3(pt.x, pt.y, 0), Vector3.forward, 3.5f);
+                }
+            }
+        }
+
+        private static readonly SmplxJoint[] IkPinJoints = new[]
+        {
+            SmplxJoint.L_Wrist,
+            SmplxJoint.R_Wrist,
+            SmplxJoint.L_Ankle,
+            SmplxJoint.R_Ankle
+        };
+
+        private void DrawIkPinsOverlay(Rect rect, Camera cam)
+        {
+            if (_data == null || cam == null || _previewInstance == null) return;
+
+            Handles.BeginGUI();
+            Event evt = Event.current;
+
+            foreach (var joint in IkPinJoints)
+            {
+                if (_previewBoneMap.TryGetValue(joint, out Transform bone) && bone != null)
+                {
+                    if (TryWorldToScreen(cam, rect, bone.position, out Vector2 screenPt))
+                    {
+                        Rect pinRect = new Rect(screenPt.x - 10, screenPt.y - 10, 20, 20);
+                        bool isHovered = pinRect.Contains(evt.mousePosition);
+                        bool isActive = (_activeIkJoint == joint);
+
+                        Color pinCol = isActive
+                            ? MotionTimelineTheme.AcidLime
+                            : (isHovered ? MotionTimelineTheme.SignalTeal : new Color(0.2f, 0.85f, 0.45f, 0.95f));
+
+                        // Outer ring
+                        Handles.color = new Color(0.05f, 0.08f, 0.12f, 0.95f);
+                        Handles.DrawSolidDisc(new Vector3(screenPt.x, screenPt.y, 0), Vector3.forward, 9f);
+
+                        // Inner icon disc
+                        Handles.color = pinCol;
+                        Handles.DrawSolidDisc(new Vector3(screenPt.x, screenPt.y, 0), Vector3.forward, 7.5f);
+                        Handles.color = Color.white;
+                        Handles.DrawWireDisc(new Vector3(screenPt.x, screenPt.y, 0), Vector3.forward, 3.5f);
+
+                        // Start Drag
+                        if (evt.type == EventType.MouseDown && evt.button == 0 && pinRect.Contains(evt.mousePosition))
+                        {
+                            _activeIkJoint = joint;
+                            _isDraggingIk = true;
+                            _ikDragStartMouse = evt.mousePosition;
+                            _ikDragStartPos = bone.position;
+                            evt.Use();
+                            GUIUtility.hotControl = GUIUtility.GetControlID(FocusType.Passive);
+                        }
+                    }
+                }
+            }
+
+            // Process drag
+            if (_isDraggingIk && _activeIkJoint.HasValue)
+            {
+                if (evt.type == EventType.MouseDrag)
+                {
+                    Vector2 deltaMouse = evt.mousePosition - _ikDragStartMouse;
+                    Vector3 camRight = cam.transform.right;
+                    Vector3 camUp = cam.transform.up;
+                    float factor = 0.003f * _previewDistance;
+                    Vector3 worldDelta = (camRight * deltaMouse.x * factor) - (camUp * deltaMouse.y * factor);
+
+                    Vector3 targetPos = _ikDragStartPos + worldDelta;
+                    Vector3 polePos = targetPos + cam.transform.forward * 0.25f;
+
+                    _data.ApplyTwoBoneIK(_currentFrame, _activeIkJoint.Value, targetPos, polePos);
+                    ApplyCurrentFrameToPreview();
+                    evt.Use();
+                    Repaint();
+                }
+                else if (evt.type == EventType.MouseUp)
+                {
+                    _isDraggingIk = false;
+                    _activeIkJoint = null;
+                    GUIUtility.hotControl = 0;
+                    evt.Use();
+                    Repaint();
                 }
             }
 
@@ -1140,9 +1325,11 @@ namespace TexMotion.Editor.Motion
 
         private void DrawViewportHUD(Rect rect)
         {
-            // 1. Top-Left Toolbar: Skeleton & Gizmos Toggles
-            Rect skelRect = new Rect(rect.x + 8, rect.y + 8, 86, 22);
-            Rect gizmoRect = new Rect(rect.x + 96, rect.y + 8, 76, 22);
+            // 1. Top-Left Toolbar: Skeleton, Gizmos, Onion Skin, IK Pins & Playback
+            Rect skelRect = new Rect(rect.x + 8, rect.y + 8, 80, 22);
+            Rect gizmoRect = new Rect(rect.x + 90, rect.y + 8, 70, 22);
+            Rect onionRect = new Rect(rect.x + 162, rect.y + 8, 66, 22);
+            Rect ikRect = new Rect(rect.x + 230, rect.y + 8, 68, 22);
 
             bool newShowSkel = GUI.Toggle(skelRect, _showSkeleton, TexMotionLocalization.TrLiteral("🦴 Skeleton"), _showSkeleton ? _accentButtonStyle : _ghostButtonStyle);
             if (newShowSkel != _showSkeleton)
@@ -1158,15 +1345,29 @@ namespace TexMotion.Editor.Motion
                 Repaint();
             }
 
+            bool newShowOnion = GUI.Toggle(onionRect, _enableOnionSkin, TexMotionLocalization.TrLiteral("🧅 Onion"), _enableOnionSkin ? _accentButtonStyle : _ghostButtonStyle);
+            if (newShowOnion != _enableOnionSkin)
+            {
+                _enableOnionSkin = newShowOnion;
+                Repaint();
+            }
+
+            bool newShowIk = GUI.Toggle(ikRect, _enableIkPins, TexMotionLocalization.TrLiteral("🦾 IK Pins"), _enableIkPins ? _accentButtonStyle : _ghostButtonStyle);
+            if (newShowIk != _enableIkPins)
+            {
+                _enableIkPins = newShowIk;
+                Repaint();
+            }
+
             // Step Back
-            Rect hudPrevRect = new Rect(rect.x + 176, rect.y + 8, 24, 22);
+            Rect hudPrevRect = new Rect(rect.x + 302, rect.y + 8, 24, 22);
             if (GUI.Button(hudPrevRect, new GUIContent("◀", TexMotionLocalization.Tr(TexMotionLocalization.PreviousFrameLeft)), _ghostButtonStyle))
             {
                 SetCurrentFrame(_currentFrame - 1);
             }
 
             // Play / Pause Toggle in HUD
-            Rect hudPlayRect = new Rect(rect.x + 200, rect.y + 8, 70, 22);
+            Rect hudPlayRect = new Rect(rect.x + 326, rect.y + 8, 68, 22);
             string hudPlayIcon = _isPlaying
                 ? TexMotionLocalization.Tr(TexMotionLocalization.Pause)
                 : TexMotionLocalization.Tr(TexMotionLocalization.Play);
@@ -1175,7 +1376,7 @@ namespace TexMotion.Editor.Motion
                 TogglePlay();
             }
             // Step Forward
-            Rect hudNextRect = new Rect(rect.x + 270, rect.y + 8, 24, 22);
+            Rect hudNextRect = new Rect(rect.x + 394, rect.y + 8, 24, 22);
             if (GUI.Button(hudNextRect, new GUIContent("▶", TexMotionLocalization.Tr(TexMotionLocalization.NextFrameRight)), _ghostButtonStyle))
             {
                 SetCurrentFrame(_currentFrame + 1);
@@ -1639,6 +1840,11 @@ namespace TexMotion.Editor.Motion
 
             EditorGUILayout.Space(6);
 
+            // Advanced Pose Correction (Tweens, Masking, IK, Palette, Glitches, etc.)
+            DrawAdvancedPoseCorrectionTools();
+
+            EditorGUILayout.Space(6);
+
             // Bone & Joint Groups
             DrawBoneSection(TexMotionLocalization.TrLiteral("👤 Root & Hips"), ref _foldoutRoot, () =>
             {
@@ -1962,6 +2168,356 @@ namespace TexMotion.Editor.Motion
             EditorGUILayout.EndVertical();
         }
 
+        private void DrawAdvancedPoseCorrectionTools()
+        {
+            _foldoutAdvancedTools = EditorGUILayout.Foldout(
+                _foldoutAdvancedTools,
+                TexMotionLocalization.TrLiteral("🛠️ Advanced Pose Correction"),
+                true,
+                EditorStyles.foldoutHeader);
+            if (!_foldoutAdvancedTools) return;
+
+            EditorGUILayout.BeginVertical(_sectionStyle);
+
+            // 1. Target Body Mask & In-Out Selection
+            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("🎯 Scope & Masking"), EditorStyles.boldLabel);
+            EditorGUILayout.BeginVertical(_cardStyle);
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("Body Mask:"), GUILayout.Width(75));
+            _selectedBodyMask = (BodyPartMask)EditorGUILayout.EnumPopup(_selectedBodyMask);
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button(TexMotionLocalization.TrLiteral("All"), _ghostButtonStyle, GUILayout.Height(18))) _selectedBodyMask = BodyPartMask.All;
+            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Upper"), _ghostButtonStyle, GUILayout.Height(18))) _selectedBodyMask = BodyPartMask.UpperBody;
+            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Lower"), _ghostButtonStyle, GUILayout.Height(18))) _selectedBodyMask = BodyPartMask.LowerBody;
+            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Arms"), _ghostButtonStyle, GUILayout.Height(18))) _selectedBodyMask = BodyPartMask.Arms;
+            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Legs"), _ghostButtonStyle, GUILayout.Height(18))) _selectedBodyMask = BodyPartMask.Legs;
+            EditorGUILayout.EndHorizontal();
+
+            // Masked actions on current frame
+            EditorGUILayout.BeginHorizontal();
+            GUI.enabled = EditableMotionData.HasClipboardData;
+            if (GUILayout.Button(new GUIContent(TexMotionLocalization.TrLiteral("📋 Paste Masked"), TexMotionLocalization.TrLiteral("Paste clipboard pose to masked parts only")), _ghostButtonStyle, GUILayout.Height(20)))
+            {
+                _data.PasteFramePose(_currentFrame, _selectedBodyMask);
+                ApplyCurrentFrameToPreview();
+                Repaint();
+            }
+            GUI.enabled = true;
+            if (GUILayout.Button(new GUIContent(TexMotionLocalization.TrLiteral("↩️ Reset Masked"), TexMotionLocalization.TrLiteral("Reset masked parts to original generated pose")), _ghostButtonStyle, GUILayout.Height(20)))
+            {
+                _data.ResetFrameToOriginal(_currentFrame, _selectedBodyMask);
+                ApplyCurrentFrameToPreview();
+                Repaint();
+            }
+            if (GUILayout.Button(new GUIContent(TexMotionLocalization.TrLiteral("⚖️ Smooth Masked"), TexMotionLocalization.TrLiteral("Smooth masked parts with neighbor frames")), _ghostButtonStyle, GUILayout.Height(20)))
+            {
+                _data.SmoothFrame(_currentFrame, _selectedBodyMask);
+                ApplyCurrentFrameToPreview();
+                Repaint();
+            }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.Space(4);
+
+            // In / Out Range
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("Range In:"), GUILayout.Width(60));
+            _rangeStartFrame = EditorGUILayout.IntSlider(_rangeStartFrame + 1, 1, _data.Frames) - 1;
+            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Set In"), _ghostButtonStyle, GUILayout.Width(50), GUILayout.Height(18)))
+            {
+                _rangeStartFrame = _currentFrame;
+                if (_rangeEndFrame < _rangeStartFrame) _rangeEndFrame = _rangeStartFrame;
+                Repaint();
+            }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("Range Out:"), GUILayout.Width(60));
+            _rangeEndFrame = EditorGUILayout.IntSlider(_rangeEndFrame + 1, 1, _data.Frames) - 1;
+            if (_rangeEndFrame < _rangeStartFrame) _rangeEndFrame = _rangeStartFrame;
+            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Set Out"), _ghostButtonStyle, GUILayout.Width(50), GUILayout.Height(18)))
+            {
+                _rangeEndFrame = _currentFrame;
+                if (_rangeStartFrame > _rangeEndFrame) _rangeStartFrame = _rangeEndFrame;
+                Repaint();
+            }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Select All Frames"), _ghostButtonStyle, GUILayout.Height(18)))
+            {
+                _rangeStartFrame = 0;
+                _rangeEndFrame = Mathf.Max(0, _data.Frames - 1);
+                Repaint();
+            }
+            EditorGUILayout.LabelField(TexMotionLocalization.TrFormat("Frames: {0} ({1}..{2})", _rangeEndFrame - _rangeStartFrame + 1, _rangeStartFrame + 1, _rangeEndFrame + 1), _metaLabelStyle);
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.Space(6);
+
+            // 2. Tweening & Interpolation
+            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("🎬 Range Tween (Keyframing)"), EditorStyles.boldLabel);
+            EditorGUILayout.BeginVertical(_cardStyle);
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("Easing:"), GUILayout.Width(60));
+            _selectedEasing = (EasingType)EditorGUILayout.EnumPopup(_selectedEasing);
+            EditorGUILayout.EndHorizontal();
+            if (GUILayout.Button(
+                new GUIContent(TexMotionLocalization.TrLiteral("Interpolate In ➔ Out (Tween)"), TexMotionLocalization.TrLiteral("Smoothly interpolates poses from Range In to Range Out using selected easing and body mask")),
+                _accentButtonStyle,
+                GUILayout.Height(24)))
+            {
+                _data.TweenRange(_rangeStartFrame, _rangeEndFrame, _selectedEasing, _selectedBodyMask);
+                ApplyCurrentFrameToPreview();
+                Repaint();
+            }
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.Space(6);
+
+            // 3. Loop Boundary Blender
+            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("🔁 Loop Blender"), EditorStyles.boldLabel);
+            EditorGUILayout.BeginVertical(_cardStyle);
+            int maxLoop = Mathf.Max(2, _data.Frames / 2);
+            _loopBlendFrames = EditorGUILayout.IntSlider(TexMotionLocalization.TrLiteral("Margin Frames:"), _loopBlendFrames, 2, maxLoop);
+            if (GUILayout.Button(
+                new GUIContent(TexMotionLocalization.TrLiteral("Blend Loop Boundary (Start ↔ End)"), TexMotionLocalization.TrLiteral("Cross-blends motion start and end frames for seamless looping")),
+                _ghostButtonStyle,
+                GUILayout.Height(24)))
+            {
+                _data.BlendLoopBoundary(_loopBlendFrames, _selectedBodyMask);
+                ApplyCurrentFrameToPreview();
+                Repaint();
+            }
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.Space(6);
+
+            // 4. Additive Range Offset
+            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("➕ Additive Range Offset"), EditorStyles.boldLabel);
+            EditorGUILayout.BeginVertical(_cardStyle);
+            _additiveRootOffset.y = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Hips Y Offset (m):"), _additiveRootOffset.y, -0.5f, 0.5f);
+            _additiveArmEulerOffset.z = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Arm Open Angle (deg):"), _additiveArmEulerOffset.z, -30f, 30f);
+            _offsetFadeEdges = EditorGUILayout.Toggle(TexMotionLocalization.TrLiteral("Fade at Range Edges"), _offsetFadeEdges);
+            if (GUILayout.Button(
+                new GUIContent(TexMotionLocalization.TrLiteral("Apply Additive Offset"), TexMotionLocalization.TrLiteral("Adds root elevation and arm angle across the selected frame range")),
+                _ghostButtonStyle,
+                GUILayout.Height(24)))
+            {
+                _data.ApplyRangeOffset(_rangeStartFrame, _rangeEndFrame, _additiveRootOffset, _additiveArmEulerOffset, _offsetFadeEdges);
+                ApplyCurrentFrameToPreview();
+                Repaint();
+            }
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.Space(6);
+
+            // 5. Penetration Limiter & Foot Grounding
+            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("🛡️ Safety & Grounding"), EditorStyles.boldLabel);
+            EditorGUILayout.BeginVertical(_cardStyle);
+            _armpitLimitAngle = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Min Armpit Angle:"), _armpitLimitAngle, 5f, 40f);
+            if (GUILayout.Button(
+                new GUIContent(TexMotionLocalization.TrLiteral("Apply Armpit Limiter (Range)"), TexMotionLocalization.TrLiteral("Prevents arms from penetrating chest/torso across range")),
+                _ghostButtonStyle,
+                GUILayout.Height(22)))
+            {
+                _data.ApplyArmpitPenetrationLimiter(_rangeStartFrame, _rangeEndFrame, _armpitLimitAngle);
+                ApplyCurrentFrameToPreview();
+                Repaint();
+            }
+
+            EditorGUILayout.Space(3);
+            _groundPlaneY = EditorGUILayout.FloatField(TexMotionLocalization.TrLiteral("Ground Plane Y:"), _groundPlaneY);
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button(
+                new GUIContent(TexMotionLocalization.TrLiteral("🦶 Ground (Cur)"), TexMotionLocalization.TrLiteral("Snaps feet to ground plane on current frame")),
+                _ghostButtonStyle,
+                GUILayout.Height(22)))
+            {
+                _data.ApplyFootGrounding(_currentFrame, _groundPlaneY);
+                ApplyCurrentFrameToPreview();
+                Repaint();
+            }
+            if (GUILayout.Button(
+                new GUIContent(TexMotionLocalization.TrLiteral("🦶 Ground (Range)"), TexMotionLocalization.TrLiteral("Snaps feet to ground plane across In-Out range")),
+                _ghostButtonStyle,
+                GUILayout.Height(22)))
+            {
+                for (int f = _rangeStartFrame; f <= _rangeEndFrame; f++)
+                {
+                    _data.ApplyFootGrounding(f, _groundPlaneY);
+                }
+                ApplyCurrentFrameToPreview();
+                Repaint();
+            }
+            if (GUILayout.Button(
+                new GUIContent(TexMotionLocalization.TrLiteral("⚓ Lock Feet"), TexMotionLocalization.TrLiteral("Locks feet positions to prevent sliding across In-Out range")),
+                _ghostButtonStyle,
+                GUILayout.Height(22)))
+            {
+                _data.LockFootPosition(_rangeStartFrame, _rangeEndFrame, isLeftFoot: true);
+                _data.LockFootPosition(_rangeStartFrame, _rangeEndFrame, isLeftFoot: false);
+                ApplyCurrentFrameToPreview();
+                Repaint();
+            }
+            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.Space(6);
+
+            // 6. Glitch Highlighter & Auto-Fixer
+            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("⚡ Glitch Highlighter & Fixer"), EditorStyles.boldLabel);
+            EditorGUILayout.BeginVertical(_cardStyle);
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button(
+                new GUIContent(TexMotionLocalization.TrLiteral("🔍 Scan Glitches"), TexMotionLocalization.TrLiteral("Scans for unnatural spikes, high angular velocity, or sudden flips")),
+                _accentButtonStyle,
+                GUILayout.Height(24)))
+            {
+                _detectedGlitches = GlitchDetector.DetectGlitches(_data);
+            }
+            if (_detectedGlitches != null && _detectedGlitches.Count > 0)
+            {
+                if (GUILayout.Button(
+                    new GUIContent(TexMotionLocalization.TrLiteral("⚡ Fix All Glitches"), TexMotionLocalization.TrLiteral("Automatically repairs all detected glitches via neighboring frame Slerp")),
+                    _ghostButtonStyle,
+                    GUILayout.Height(24)))
+                {
+                    GlitchDetector.FixAllGlitches(_data, _detectedGlitches);
+                    _detectedGlitches.Clear();
+                    ApplyCurrentFrameToPreview();
+                    Repaint();
+                }
+            }
+            EditorGUILayout.EndHorizontal();
+
+            if (_detectedGlitches != null && _detectedGlitches.Count > 0)
+            {
+                EditorGUILayout.HelpBox(TexMotionLocalization.TrFormat("⚠️ {0} glitch frame(s) detected!", _detectedGlitches.Count), MessageType.Warning);
+                for (int i = 0; i < Mathf.Min(5, _detectedGlitches.Count); i++)
+                {
+                    var g = _detectedGlitches[i];
+                    EditorGUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField(TexMotionLocalization.TrFormat("Frame {0}: {1}", g.FrameIndex + 1, g.Reason), EditorStyles.miniLabel);
+                    if (GUILayout.Button(TexMotionLocalization.TrLiteral("Go"), _ghostButtonStyle, GUILayout.Width(35), GUILayout.Height(16)))
+                    {
+                        SetCurrentFrame(g.FrameIndex);
+                    }
+                    if (GUILayout.Button(TexMotionLocalization.TrLiteral("Fix"), _ghostButtonStyle, GUILayout.Width(35), GUILayout.Height(16)))
+                    {
+                        GlitchDetector.FixGlitch(_data, g);
+                        _detectedGlitches.RemoveAt(i);
+                        ApplyCurrentFrameToPreview();
+                        Repaint();
+                        break;
+                    }
+                    EditorGUILayout.EndHorizontal();
+                }
+                if (_detectedGlitches.Count > 5)
+                {
+                    EditorGUILayout.LabelField(TexMotionLocalization.TrFormat("... and {0} more.", _detectedGlitches.Count - 5), _metaLabelStyle);
+                }
+            }
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.Space(6);
+
+            // 7. Pose Palette & Blending
+            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("🎨 Pose Palette"), EditorStyles.boldLabel);
+            EditorGUILayout.BeginVertical(_cardStyle);
+
+            EditorGUILayout.BeginHorizontal();
+            for (int s = 0; s < 8; s++)
+            {
+                bool has = _posePalette.HasPose(s);
+                bool isSel = (_selectedPaletteSlot == s);
+                string slotLabel = string.Format("{0}{1}", s + 1, has ? "●" : "");
+                Color origCol = GUI.backgroundColor;
+                if (isSel) GUI.backgroundColor = MotionTimelineTheme.ElectricCyan;
+                else if (has) GUI.backgroundColor = MotionTimelineTheme.PulseGreen;
+                if (GUILayout.Button(slotLabel, GUILayout.Width(26), GUILayout.Height(22)))
+                {
+                    _selectedPaletteSlot = s;
+                }
+                GUI.backgroundColor = origCol;
+            }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button(
+                new GUIContent(TexMotionLocalization.TrFormat("💾 Store to Slot {0}", _selectedPaletteSlot + 1), TexMotionLocalization.TrLiteral("Stores current frame pose into the active slot")),
+                _ghostButtonStyle,
+                GUILayout.Height(22)))
+            {
+                _posePalette.Capture(_selectedPaletteSlot, _data, _currentFrame);
+            }
+            if (GUILayout.Button(
+                new GUIContent(TexMotionLocalization.TrLiteral("🗑️ Clear"), TexMotionLocalization.TrLiteral("Clears the active slot")),
+                _ghostButtonStyle,
+                GUILayout.Width(50),
+                GUILayout.Height(22)))
+            {
+                _posePalette.Clear(_selectedPaletteSlot);
+            }
+            EditorGUILayout.EndHorizontal();
+
+            GUI.enabled = _posePalette.HasPose(_selectedPaletteSlot);
+            _paletteBlendWeight = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Blend Weight:"), _paletteBlendWeight, 0f, 1f);
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button(
+                new GUIContent(TexMotionLocalization.TrLiteral("Apply Blend (Cur)"), TexMotionLocalization.TrLiteral("Blends active palette pose into current frame with selected mask")),
+                _accentButtonStyle,
+                GUILayout.Height(22)))
+            {
+                _posePalette.Apply(_selectedPaletteSlot, _data, _currentFrame, _paletteBlendWeight, _selectedBodyMask);
+                ApplyCurrentFrameToPreview();
+                Repaint();
+            }
+            if (GUILayout.Button(
+                new GUIContent(TexMotionLocalization.TrLiteral("Apply Blend (Range)"), TexMotionLocalization.TrLiteral("Blends active palette pose across In-Out range with selected mask")),
+                _ghostButtonStyle,
+                GUILayout.Height(22)))
+            {
+                for (int f = _rangeStartFrame; f <= _rangeEndFrame; f++)
+                {
+                    _posePalette.Apply(_selectedPaletteSlot, _data, f, _paletteBlendWeight, _selectedBodyMask);
+                }
+                ApplyCurrentFrameToPreview();
+                Repaint();
+            }
+            EditorGUILayout.EndHorizontal();
+            GUI.enabled = true;
+
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.Space(6);
+
+            // 8. Retiming (Time Warp)
+            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("⏳ Range Retiming"), EditorStyles.boldLabel);
+            EditorGUILayout.BeginVertical(_cardStyle);
+            int curDuration = Mathf.Max(1, _rangeEndFrame - _rangeStartFrame + 1);
+            EditorGUILayout.LabelField(TexMotionLocalization.TrFormat("Current Range: {0} frames", curDuration), _metaLabelStyle);
+            _retimeNewFrameCount = EditorGUILayout.IntSlider(TexMotionLocalization.TrLiteral("New Frames:"), _retimeNewFrameCount, 2, Mathf.Max(curDuration * 3, 120));
+            if (GUILayout.Button(
+                new GUIContent(TexMotionLocalization.TrLiteral("⏳ Retime Range (In-Out)"), TexMotionLocalization.TrLiteral("Resamples and rescales the In-Out range frames")),
+                _ghostButtonStyle,
+                GUILayout.Height(24)))
+            {
+                _data.RetimeRange(_rangeStartFrame, _rangeEndFrame, _retimeNewFrameCount);
+                _currentFrame = Mathf.Clamp(_currentFrame, 0, _data.Frames - 1);
+                ApplyCurrentFrameToPreview();
+                Repaint();
+            }
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.EndVertical();
+        }
+
         #endregion
 
         #region Bottom Timeline Panel
@@ -2110,6 +2666,22 @@ namespace TexMotion.Editor.Motion
             float frameTrackY = rulerHeight;
             float frameTrackHeight = viewRect.height - rulerHeight;
 
+            // Draw In / Out Range Selection Highlight
+            if (_rangeEndFrame > _rangeStartFrame)
+            {
+                float startX = _rangeStartFrame * _pixelsPerFrame;
+                float endX = (_rangeEndFrame + 1) * _pixelsPerFrame;
+                Rect rangeHighlight = new Rect(startX, rulerHeight, endX - startX, frameTrackHeight);
+                EditorGUI.DrawRect(rangeHighlight, new Color(0.0f, 0.85f, 1.0f, 0.12f));
+
+                // In and Out Boundary Lines
+                EditorGUI.DrawRect(new Rect(startX, 0, 2f, viewRect.height), MotionTimelineTheme.SignalTeal);
+                EditorGUI.DrawRect(new Rect(endX - 2f, 0, 2f, viewRect.height), MotionTimelineTheme.SignalTeal);
+
+                GUI.Label(new Rect(startX + 3, 2, 20, rulerHeight), "IN", _rulerTextStyle);
+                GUI.Label(new Rect(endX - 24, 2, 22, rulerHeight), "OUT", _rulerTextStyle);
+            }
+
             // Draw Frame Bars & Ticks
             int step = _pixelsPerFrame < 15f ? 10 : (_pixelsPerFrame < 30f ? 5 : 1);
 
@@ -2161,6 +2733,21 @@ namespace TexMotion.Editor.Motion
                             "Frame {0}: Occlusion / Ambiguity Warning",
                             f + 1);
                     GUI.Label(frameBox, new GUIContent(string.Empty, tip));
+                }
+
+                // Glitch Warning Marker
+                if (_detectedGlitches != null && _detectedGlitches.Count > 0)
+                {
+                    foreach (var g in _detectedGlitches)
+                    {
+                        if (g.Frame == f)
+                        {
+                            Rect glitchBar = new Rect(frameBox.x, frameBox.yMax - 4, frameBox.width, 4);
+                            EditorGUI.DrawRect(glitchBar, MotionTimelineTheme.CoralRed);
+                            GUI.Label(frameBox, new GUIContent(string.Empty, $"⚡ {g.Description}"));
+                            break;
+                        }
+                    }
                 }
 
                 // Modified Keyframe Marker (Diamond Icon)
