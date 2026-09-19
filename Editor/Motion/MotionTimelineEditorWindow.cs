@@ -1852,6 +1852,11 @@ namespace TexMotion.Editor.Motion
 
             EditorGUILayout.Space(6);
 
+            // Stylized Hand-Keyed Polish (Snap, Cushion, Drag, Stepping, etc.)
+            DrawStylizedPolishSection();
+
+            EditorGUILayout.Space(6);
+
             // Bone & Joint Groups
             DrawBoneSection(TexMotionLocalization.TrLiteral("👤 Root & Hips"), ref _foldoutRoot, () =>
             {
@@ -1949,9 +1954,10 @@ namespace TexMotion.Editor.Motion
             foldout = EditorGUILayout.Foldout(foldout, title, true, EditorStyles.foldoutHeader);
             if (foldout)
             {
-                EditorGUILayout.BeginVertical(_sectionStyle);
-                drawContents();
-                EditorGUILayout.EndVertical();
+                using (new EditorGUILayout.VerticalScope(_sectionStyle))
+                {
+                    drawContents();
+                }
                 EditorGUILayout.Space(4);
             }
         }
@@ -1959,44 +1965,48 @@ namespace TexMotion.Editor.Motion
         private void DrawRootPositionInspector()
         {
             bool isSelected = (_selectedJoint == SmplxJoint.Pelvis);
+            IDisposable highlightScope = null;
             if (isSelected)
             {
                 GUI.backgroundColor = MotionTimelineTheme.WithAlpha(MotionTimelineTheme.AcidLime, 0.18f);
-                EditorGUILayout.BeginVertical(_sectionStyle);
+                highlightScope = new EditorGUILayout.VerticalScope(_sectionStyle);
                 GUI.backgroundColor = Color.white;
             }
 
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("Root Position (Offset):"), EditorStyles.miniBoldLabel);
-            if (GUILayout.Button(
-                isSelected
-                    ? TexMotionLocalization.TrLiteral("🎯 Active")
-                    : TexMotionLocalization.TrLiteral("🎯 Select"),
-                isSelected ? _accentButtonStyle : _ghostButtonStyle,
-                GUILayout.Width(isSelected ? 65 : 60)))
+            try
             {
-                _selectedJoint = isSelected ? (SmplxJoint?)null : SmplxJoint.Pelvis;
-                Repaint();
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("Root Position (Offset):"), EditorStyles.miniBoldLabel);
+                    if (GUILayout.Button(
+                        isSelected
+                            ? TexMotionLocalization.TrLiteral("🎯 Active")
+                            : TexMotionLocalization.TrLiteral("🎯 Select"),
+                        isSelected ? _accentButtonStyle : _ghostButtonStyle,
+                        GUILayout.Width(isSelected ? 65 : 60)))
+                    {
+                        _selectedJoint = isSelected ? (SmplxJoint?)null : SmplxJoint.Pelvis;
+                        Repaint();
+                    }
+                }
+
+                Vector3 rootPos = _data.GetRootPosition(_currentFrame);
+
+                EditorGUI.BeginChangeCheck();
+                float x = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("X (Left/Right)"), rootPos.x, -2.0f, 2.0f);
+                float y = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Y (Height)"), rootPos.y, -2.0f, 2.0f);
+                float z = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Z (Fwd/Back)"), rootPos.z, -2.0f, 2.0f);
+
+                if (EditorGUI.EndChangeCheck())
+                {
+                    _data.RecordUndo(TexMotionLocalization.TrFormat("Adjust Root Position Frame {0}", _currentFrame));
+                    _data.SetRootPosition(_currentFrame, new Vector3(x, y, z));
+                    ApplyCurrentFrameToPreview();
+                }
             }
-            EditorGUILayout.EndHorizontal();
-
-            Vector3 rootPos = _data.GetRootPosition(_currentFrame);
-
-            EditorGUI.BeginChangeCheck();
-            float x = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("X (Left/Right)"), rootPos.x, -2.0f, 2.0f);
-            float y = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Y (Height)"), rootPos.y, -2.0f, 2.0f);
-            float z = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Z (Fwd/Back)"), rootPos.z, -2.0f, 2.0f);
-
-            if (EditorGUI.EndChangeCheck())
+            finally
             {
-                _data.RecordUndo(TexMotionLocalization.TrFormat("Adjust Root Position Frame {0}", _currentFrame));
-                _data.SetRootPosition(_currentFrame, new Vector3(x, y, z));
-                ApplyCurrentFrameToPreview();
-            }
-
-            if (isSelected)
-            {
-                EditorGUILayout.EndVertical();
+                highlightScope?.Dispose();
             }
         }
 
@@ -2005,53 +2015,55 @@ namespace TexMotion.Editor.Motion
             bool isSelected = (_selectedJoint == joint);
             Vector3 euler = _data.GetJointEuler(_currentFrame, joint);
 
+            IDisposable highlightScope = null;
             if (isSelected)
             {
                 GUI.backgroundColor = MotionTimelineTheme.WithAlpha(MotionTimelineTheme.AcidLime, 0.18f);
-                EditorGUILayout.BeginVertical(_sectionStyle);
+                highlightScope = new EditorGUILayout.VerticalScope(_sectionStyle);
                 GUI.backgroundColor = Color.white;
             }
 
-            EditorGUILayout.BeginHorizontal();
-
-            // Bone select toggle button
-            if (GUILayout.Button(
-                isSelected ? TexMotionLocalization.TrLiteral("🎯 Active") : "🎯",
-                isSelected ? _accentButtonStyle : _ghostButtonStyle,
-                GUILayout.Width(isSelected ? 62 : 28)))
+            try
             {
-                _selectedJoint = isSelected ? (SmplxJoint?)null : joint;
-                Repaint();
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    // Bone select toggle button
+                    if (GUILayout.Button(
+                        isSelected ? TexMotionLocalization.TrLiteral("🎯 Active") : "🎯",
+                        isSelected ? _accentButtonStyle : _ghostButtonStyle,
+                        GUILayout.Width(isSelected ? 62 : 28)))
+                    {
+                        _selectedJoint = isSelected ? (SmplxJoint?)null : joint;
+                        Repaint();
+                    }
+
+                    var titleStyle = isSelected ? EditorStyles.boldLabel : EditorStyles.miniBoldLabel;
+                    EditorGUILayout.LabelField(label, titleStyle);
+
+                    if (GUILayout.Button(TexMotionLocalization.TrLiteral("Reset"), _ghostButtonStyle, GUILayout.Width(45)))
+                    {
+                        _data.ResetJointToOriginal(_currentFrame, joint);
+                        ApplyCurrentFrameToPreview();
+                        euler = _data.GetJointEuler(_currentFrame, joint);
+                        Repaint();
+                    }
+                }
+
+                EditorGUI.BeginChangeCheck();
+                float rx = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Pitch (X)"), euler.x, -180f, 180f);
+                float ry = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Yaw (Y)"), euler.y, -180f, 180f);
+                float rz = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Roll (Z)"), euler.z, -180f, 180f);
+
+                if (EditorGUI.EndChangeCheck())
+                {
+                    _data.RecordUndo(TexMotionLocalization.TrFormat("Rotate {0} on Frame {1}", GetJointFriendlyName(joint), _currentFrame));
+                    _data.SetJointEuler(_currentFrame, joint, new Vector3(rx, ry, rz));
+                    ApplyCurrentFrameToPreview();
+                }
             }
-
-            var titleStyle = isSelected ? EditorStyles.boldLabel : EditorStyles.miniBoldLabel;
-            EditorGUILayout.LabelField(label, titleStyle);
-
-            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Reset"), _ghostButtonStyle, GUILayout.Width(45)))
+            finally
             {
-                _data.ResetJointToOriginal(_currentFrame, joint);
-                ApplyCurrentFrameToPreview();
-                EditorGUILayout.EndHorizontal();
-                if (isSelected) EditorGUILayout.EndVertical();
-                return;
-            }
-            EditorGUILayout.EndHorizontal();
-
-            EditorGUI.BeginChangeCheck();
-            float rx = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Pitch (X)"), euler.x, -180f, 180f);
-            float ry = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Yaw (Y)"), euler.y, -180f, 180f);
-            float rz = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Roll (Z)"), euler.z, -180f, 180f);
-
-            if (EditorGUI.EndChangeCheck())
-            {
-                _data.RecordUndo(TexMotionLocalization.TrFormat("Rotate {0} on Frame {1}", GetJointFriendlyName(joint), _currentFrame));
-                _data.SetJointEuler(_currentFrame, joint, new Vector3(rx, ry, rz));
-                ApplyCurrentFrameToPreview();
-            }
-
-            if (isSelected)
-            {
-                EditorGUILayout.EndVertical();
+                highlightScope?.Dispose();
             }
 
             EditorGUILayout.Space(2);
@@ -2547,15 +2559,11 @@ namespace TexMotion.Editor.Motion
             }
             EditorGUILayout.EndVertical();
 
-            // 9. Stylized Hand-Keyed Polish
-            DrawStylizedPolishSection();
-
             EditorGUILayout.EndVertical();
         }
 
         private void DrawStylizedPolishSection()
         {
-            EditorGUILayout.Space(6);
             _foldoutStylizedPolish = EditorGUILayout.Foldout(
                 _foldoutStylizedPolish,
                 TexMotionLocalization.TrLiteral("✨ Stylized Hand-Keyed Polish (手付け風クオリティ向上)"),
@@ -2564,149 +2572,154 @@ namespace TexMotion.Editor.Motion
 
             if (!_foldoutStylizedPolish) return;
 
-            EditorGUILayout.BeginVertical(_cardStyle);
-
-            // Presets row
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("Preset:"), GUILayout.Width(50));
-            if (GUILayout.Button(TexMotionLocalization.TrLiteral("⚡ Action"), _selectedPolishPreset == StylizedPolishPreset.SnappyAction ? _accentButtonStyle : _ghostButtonStyle, GUILayout.Height(20)))
+            using (new EditorGUILayout.VerticalScope(_sectionStyle))
             {
-                _selectedPolishPreset = StylizedPolishPreset.SnappyAction;
-                _stylizedOptions.ApplyPreset(_selectedPolishPreset);
+                using (new EditorGUILayout.VerticalScope(_cardStyle))
+                {
+                    // Presets row
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("Preset:"), GUILayout.Width(50));
+                        if (GUILayout.Button(TexMotionLocalization.TrLiteral("⚡ Action"), _selectedPolishPreset == StylizedPolishPreset.SnappyAction ? _accentButtonStyle : _ghostButtonStyle, GUILayout.Height(20)))
+                        {
+                            _selectedPolishPreset = StylizedPolishPreset.SnappyAction;
+                            _stylizedOptions.ApplyPreset(_selectedPolishPreset);
+                        }
+                        if (GUILayout.Button(TexMotionLocalization.TrLiteral("🏋️ Weight"), _selectedPolishPreset == StylizedPolishPreset.RealisticWeight ? _accentButtonStyle : _ghostButtonStyle, GUILayout.Height(20)))
+                        {
+                            _selectedPolishPreset = StylizedPolishPreset.RealisticWeight;
+                            _stylizedOptions.ApplyPreset(_selectedPolishPreset);
+                        }
+                        if (GUILayout.Button(TexMotionLocalization.TrLiteral("🍃 Subtle"), _selectedPolishPreset == StylizedPolishPreset.SubtlePolish ? _accentButtonStyle : _ghostButtonStyle, GUILayout.Height(20)))
+                        {
+                            _selectedPolishPreset = StylizedPolishPreset.SubtlePolish;
+                            _stylizedOptions.ApplyPreset(_selectedPolishPreset);
+                        }
+                    }
+
+                    EditorGUILayout.Space(4);
+
+                    // Scope selection (Range vs Entire Clip)
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("Scope:"), GUILayout.Width(50));
+                        if (GUILayout.Button(TexMotionLocalization.TrLiteral("In-Out Range"), !_polishEntireClip ? _accentButtonStyle : _ghostButtonStyle, GUILayout.Height(19)))
+                            _polishEntireClip = false;
+                        if (GUILayout.Button(TexMotionLocalization.TrLiteral("Entire Clip"), _polishEntireClip ? _accentButtonStyle : _ghostButtonStyle, GUILayout.Height(19)))
+                            _polishEntireClip = true;
+                    }
+
+                    EditorGUILayout.Space(6);
+
+                    // Primary Execute Button
+                    var origBg = GUI.backgroundColor;
+                    GUI.backgroundColor = MotionTimelineTheme.SignalTeal;
+                    string execLabel = _polishEntireClip
+                        ? TexMotionLocalization.TrLiteral("✨ Polish Motion (Entire Clip)")
+                        : TexMotionLocalization.TrFormat("✨ Polish Motion (Range {0}..{1})", _rangeStartFrame, _rangeEndFrame);
+
+                    if (GUILayout.Button(new GUIContent(execLabel, TexMotionLocalization.TrLiteral("Transforms dense AI mocap into stylized, punchy hand-keyed quality animation with full Undo/Redo")), GUILayout.Height(28)))
+                    {
+                        int sFrame = _polishEntireClip ? 0 : _rangeStartFrame;
+                        int eFrame = _polishEntireClip ? _data.Frames - 1 : _rangeEndFrame;
+                        _data.PolishStylizedMotion(sFrame, eFrame, _stylizedOptions, _selectedBodyMask);
+                        ApplyCurrentFrameToPreview();
+                        Repaint();
+                    }
+                    GUI.backgroundColor = origBg;
+
+                    EditorGUILayout.Space(6);
+
+                    // Sub-options (Toggles & Sliders)
+                    // 1. Timing & Spacing
+                    EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("⏱️ Timing & Spacing (緩急・キレ)"), EditorStyles.boldLabel);
+                    _stylizedOptions.EnableSnapAndEase = EditorGUILayout.ToggleLeft(TexMotionLocalization.TrLiteral("Snap & Ease (タメ・ツメ強調)"), _stylizedOptions.EnableSnapAndEase);
+                    if (_stylizedOptions.EnableSnapAndEase)
+                    {
+                        EditorGUI.indentLevel++;
+                        _stylizedOptions.SnapIntensity = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Snap Intensity:"), _stylizedOptions.SnapIntensity, 0.1f, 1.0f);
+                        _stylizedOptions.HoldThresholdDegPerSec = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Hold Threshold (deg/s):"), _stylizedOptions.HoldThresholdDegPerSec, 5f, 40f);
+                        EditorGUI.indentLevel--;
+                    }
+
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("Anime Frame Stepping:"), GUILayout.Width(130));
+                        _stylizedOptions.StepMode = (AnimeStepMode)EditorGUILayout.EnumPopup(_stylizedOptions.StepMode);
+                    }
+
+                    _stylizedOptions.EnableKeyframeDecimator = EditorGUILayout.ToggleLeft(TexMotionLocalization.TrLiteral("Keyframe Decimator (カーブ削減)"), _stylizedOptions.EnableKeyframeDecimator);
+                    if (_stylizedOptions.EnableKeyframeDecimator)
+                    {
+                        EditorGUI.indentLevel++;
+                        _stylizedOptions.DecimatorToleranceDeg = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Tolerance (deg):"), _stylizedOptions.DecimatorToleranceDeg, 0.5f, 8f);
+                        EditorGUI.indentLevel--;
+                    }
+
+                    EditorGUILayout.Space(4);
+
+                    // 2. Weight & Physics
+                    EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("⚖️ Weight & Balance (重心・接地感)"), EditorStyles.boldLabel);
+                    _stylizedOptions.EnableLandingCushion = EditorGUILayout.ToggleLeft(TexMotionLocalization.TrLiteral("Landing Cushion & Bounce (接地沈み込み)"), _stylizedOptions.EnableLandingCushion);
+                    if (_stylizedOptions.EnableLandingCushion)
+                    {
+                        EditorGUI.indentLevel++;
+                        _stylizedOptions.CushionDepth = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Cushion Depth (m):"), _stylizedOptions.CushionDepth, 0.01f, 0.08f);
+                        _stylizedOptions.CushionRecoveryFrames = EditorGUILayout.IntSlider(TexMotionLocalization.TrLiteral("Recovery Frames:"), _stylizedOptions.CushionRecoveryFrames, 2, 8);
+                        EditorGUI.indentLevel--;
+                    }
+
+                    _stylizedOptions.EnableContrapposto = EditorGUILayout.ToggleLeft(TexMotionLocalization.TrLiteral("Contrapposto Booster (骨盤傾斜強調)"), _stylizedOptions.EnableContrapposto);
+                    if (_stylizedOptions.EnableContrapposto)
+                    {
+                        EditorGUI.indentLevel++;
+                        _stylizedOptions.ContrappostoWeight = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Boost Weight:"), _stylizedOptions.ContrappostoWeight, 0.2f, 2.5f);
+                        EditorGUI.indentLevel--;
+                    }
+
+                    EditorGUILayout.Space(4);
+
+                    // 3. Overlapping & Drag
+                    EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("🌊 Overlapping & Drag (運動連鎖・しなり)"), EditorStyles.boldLabel);
+                    _stylizedOptions.EnableKinematicChainDelay = EditorGUILayout.ToggleLeft(TexMotionLocalization.TrLiteral("Kinematic Drag (四肢遅延しなり)"), _stylizedOptions.EnableKinematicChainDelay);
+                    if (_stylizedOptions.EnableKinematicChainDelay)
+                    {
+                        EditorGUI.indentLevel++;
+                        _stylizedOptions.DragDelayFrames = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Drag Delay (frames):"), _stylizedOptions.DragDelayFrames, 0.2f, 2.0f);
+                        EditorGUI.indentLevel--;
+                    }
+
+                    _stylizedOptions.EnableOvershoot = EditorGUILayout.ToggleLeft(TexMotionLocalization.TrLiteral("Overshoot & Settling (停止時反動)"), _stylizedOptions.EnableOvershoot);
+                    if (_stylizedOptions.EnableOvershoot)
+                    {
+                        EditorGUI.indentLevel++;
+                        _stylizedOptions.OvershootAmount = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Overshoot Amount:"), _stylizedOptions.OvershootAmount, 0.1f, 0.8f);
+                        _stylizedOptions.OvershootFrames = EditorGUILayout.IntSlider(TexMotionLocalization.TrLiteral("Settle Frames:"), _stylizedOptions.OvershootFrames, 2, 6);
+                        EditorGUI.indentLevel--;
+                    }
+
+                    EditorGUILayout.Space(4);
+
+                    // 4. Pose & Silhouette
+                    EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("🎨 Pose & Silhouette (誇張・美化)"), EditorStyles.boldLabel);
+                    _stylizedOptions.EnablePoseExaggeration = EditorGUILayout.ToggleLeft(TexMotionLocalization.TrLiteral("Pose Exaggeration (ポーズ誇張)"), _stylizedOptions.EnablePoseExaggeration);
+                    if (_stylizedOptions.EnablePoseExaggeration)
+                    {
+                        EditorGUI.indentLevel++;
+                        _stylizedOptions.ExaggerationScale = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Exaggeration Scale:"), _stylizedOptions.ExaggerationScale, 1.0f, 1.5f);
+                        EditorGUI.indentLevel--;
+                    }
+
+                    _stylizedOptions.EnableTrajectoryArcSmoothing = EditorGUILayout.ToggleLeft(TexMotionLocalization.TrLiteral("Trajectory Arc Smoother (3D円弧整流)"), _stylizedOptions.EnableTrajectoryArcSmoothing);
+                    if (_stylizedOptions.EnableTrajectoryArcSmoothing)
+                    {
+                        EditorGUI.indentLevel++;
+                        _stylizedOptions.ArcSmoothWindow = EditorGUILayout.IntSlider(TexMotionLocalization.TrLiteral("Window Size:"), _stylizedOptions.ArcSmoothWindow, 3, 9);
+                        _stylizedOptions.ArcBlendWeight = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Blend Weight:"), _stylizedOptions.ArcBlendWeight, 0.2f, 1.0f);
+                        EditorGUI.indentLevel--;
+                    }
+                }
             }
-            if (GUILayout.Button(TexMotionLocalization.TrLiteral("🏋️ Weight"), _selectedPolishPreset == StylizedPolishPreset.RealisticWeight ? _accentButtonStyle : _ghostButtonStyle, GUILayout.Height(20)))
-            {
-                _selectedPolishPreset = StylizedPolishPreset.RealisticWeight;
-                _stylizedOptions.ApplyPreset(_selectedPolishPreset);
-            }
-            if (GUILayout.Button(TexMotionLocalization.TrLiteral("🍃 Subtle"), _selectedPolishPreset == StylizedPolishPreset.SubtlePolish ? _accentButtonStyle : _ghostButtonStyle, GUILayout.Height(20)))
-            {
-                _selectedPolishPreset = StylizedPolishPreset.SubtlePolish;
-                _stylizedOptions.ApplyPreset(_selectedPolishPreset);
-            }
-            EditorGUILayout.EndHorizontal();
-
-            EditorGUILayout.Space(4);
-
-            // Scope selection (Range vs Entire Clip)
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("Scope:"), GUILayout.Width(50));
-            if (GUILayout.Button(TexMotionLocalization.TrLiteral("In-Out Range"), !_polishEntireClip ? _accentButtonStyle : _ghostButtonStyle, GUILayout.Height(19)))
-                _polishEntireClip = false;
-            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Entire Clip"), _polishEntireClip ? _accentButtonStyle : _ghostButtonStyle, GUILayout.Height(19)))
-                _polishEntireClip = true;
-            EditorGUILayout.EndHorizontal();
-
-            EditorGUILayout.Space(6);
-
-            // Primary Execute Button
-            var origBg = GUI.backgroundColor;
-            GUI.backgroundColor = MotionTimelineTheme.SignalTeal;
-            string execLabel = _polishEntireClip
-                ? TexMotionLocalization.TrLiteral("✨ Polish Motion (Entire Clip)")
-                : TexMotionLocalization.TrFormat("✨ Polish Motion (Range {0}..{1})", _rangeStartFrame, _rangeEndFrame);
-
-            if (GUILayout.Button(new GUIContent(execLabel, TexMotionLocalization.TrLiteral("Transforms dense AI mocap into stylized, punchy hand-keyed quality animation with full Undo/Redo")), GUILayout.Height(28)))
-            {
-                int sFrame = _polishEntireClip ? 0 : _rangeStartFrame;
-                int eFrame = _polishEntireClip ? _data.Frames - 1 : _rangeEndFrame;
-                _data.PolishStylizedMotion(sFrame, eFrame, _stylizedOptions, _selectedBodyMask);
-                ApplyCurrentFrameToPreview();
-                Repaint();
-            }
-            GUI.backgroundColor = origBg;
-
-            EditorGUILayout.Space(6);
-
-            // Sub-options (Toggles & Sliders)
-            // 1. Timing & Spacing
-            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("⏱️ Timing & Spacing (緩急・キレ)"), EditorStyles.boldLabel);
-            _stylizedOptions.EnableSnapAndEase = EditorGUILayout.ToggleLeft(TexMotionLocalization.TrLiteral("Snap & Ease (タメ・ツメ強調)"), _stylizedOptions.EnableSnapAndEase);
-            if (_stylizedOptions.EnableSnapAndEase)
-            {
-                EditorGUI.indentLevel++;
-                _stylizedOptions.SnapIntensity = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Snap Intensity:"), _stylizedOptions.SnapIntensity, 0.1f, 1.0f);
-                _stylizedOptions.HoldThresholdDegPerSec = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Hold Threshold (deg/s):"), _stylizedOptions.HoldThresholdDegPerSec, 5f, 40f);
-                EditorGUI.indentLevel--;
-            }
-
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("Anime Frame Stepping:"), GUILayout.Width(130));
-            _stylizedOptions.StepMode = (AnimeStepMode)EditorGUILayout.EnumPopup(_stylizedOptions.StepMode);
-            EditorGUILayout.EndHorizontal();
-
-            _stylizedOptions.EnableKeyframeDecimator = EditorGUILayout.ToggleLeft(TexMotionLocalization.TrLiteral("Keyframe Decimator (カーブ削減)"), _stylizedOptions.EnableKeyframeDecimator);
-            if (_stylizedOptions.EnableKeyframeDecimator)
-            {
-                EditorGUI.indentLevel++;
-                _stylizedOptions.DecimatorToleranceDeg = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Tolerance (deg):"), _stylizedOptions.DecimatorToleranceDeg, 0.5f, 8f);
-                EditorGUI.indentLevel--;
-            }
-
-            EditorGUILayout.Space(4);
-
-            // 2. Weight & Physics
-            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("⚖️ Weight & Balance (重心・接地感)"), EditorStyles.boldLabel);
-            _stylizedOptions.EnableLandingCushion = EditorGUILayout.ToggleLeft(TexMotionLocalization.TrLiteral("Landing Cushion & Bounce (接地沈み込み)"), _stylizedOptions.EnableLandingCushion);
-            if (_stylizedOptions.EnableLandingCushion)
-            {
-                EditorGUI.indentLevel++;
-                _stylizedOptions.CushionDepth = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Cushion Depth (m):"), _stylizedOptions.CushionDepth, 0.01f, 0.08f);
-                _stylizedOptions.CushionRecoveryFrames = EditorGUILayout.IntSlider(TexMotionLocalization.TrLiteral("Recovery Frames:"), _stylizedOptions.CushionRecoveryFrames, 2, 8);
-                EditorGUI.indentLevel--;
-            }
-
-            _stylizedOptions.EnableContrapposto = EditorGUILayout.ToggleLeft(TexMotionLocalization.TrLiteral("Contrapposto Booster (骨盤傾斜強調)"), _stylizedOptions.EnableContrapposto);
-            if (_stylizedOptions.EnableContrapposto)
-            {
-                EditorGUI.indentLevel++;
-                _stylizedOptions.ContrappostoWeight = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Boost Weight:"), _stylizedOptions.ContrappostoWeight, 0.2f, 2.5f);
-                EditorGUI.indentLevel--;
-            }
-
-            EditorGUILayout.Space(4);
-
-            // 3. Overlapping & Drag
-            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("🌊 Overlapping & Drag (運動連鎖・しなり)"), EditorStyles.boldLabel);
-            _stylizedOptions.EnableKinematicChainDelay = EditorGUILayout.ToggleLeft(TexMotionLocalization.TrLiteral("Kinematic Drag (四肢遅延しなり)"), _stylizedOptions.EnableKinematicChainDelay);
-            if (_stylizedOptions.EnableKinematicChainDelay)
-            {
-                EditorGUI.indentLevel++;
-                _stylizedOptions.DragDelayFrames = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Drag Delay (frames):"), _stylizedOptions.DragDelayFrames, 0.2f, 2.0f);
-                EditorGUI.indentLevel--;
-            }
-
-            _stylizedOptions.EnableOvershoot = EditorGUILayout.ToggleLeft(TexMotionLocalization.TrLiteral("Overshoot & Settling (停止時反動)"), _stylizedOptions.EnableOvershoot);
-            if (_stylizedOptions.EnableOvershoot)
-            {
-                EditorGUI.indentLevel++;
-                _stylizedOptions.OvershootAmount = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Overshoot Amount:"), _stylizedOptions.OvershootAmount, 0.1f, 0.8f);
-                _stylizedOptions.OvershootFrames = EditorGUILayout.IntSlider(TexMotionLocalization.TrLiteral("Settle Frames:"), _stylizedOptions.OvershootFrames, 2, 6);
-                EditorGUI.indentLevel--;
-            }
-
-            EditorGUILayout.Space(4);
-
-            // 4. Pose & Silhouette
-            EditorGUILayout.LabelField(TexMotionLocalization.TrLiteral("🎨 Pose & Silhouette (誇張・美化)"), EditorStyles.boldLabel);
-            _stylizedOptions.EnablePoseExaggeration = EditorGUILayout.ToggleLeft(TexMotionLocalization.TrLiteral("Pose Exaggeration (ポーズ誇張)"), _stylizedOptions.EnablePoseExaggeration);
-            if (_stylizedOptions.EnablePoseExaggeration)
-            {
-                EditorGUI.indentLevel++;
-                _stylizedOptions.ExaggerationScale = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Exaggeration Scale:"), _stylizedOptions.ExaggerationScale, 1.0f, 1.5f);
-                EditorGUI.indentLevel--;
-            }
-
-            _stylizedOptions.EnableTrajectoryArcSmoothing = EditorGUILayout.ToggleLeft(TexMotionLocalization.TrLiteral("Trajectory Arc Smoother (3D円弧整流)"), _stylizedOptions.EnableTrajectoryArcSmoothing);
-            if (_stylizedOptions.EnableTrajectoryArcSmoothing)
-            {
-                EditorGUI.indentLevel++;
-                _stylizedOptions.ArcSmoothWindow = EditorGUILayout.IntSlider(TexMotionLocalization.TrLiteral("Window Size:"), _stylizedOptions.ArcSmoothWindow, 3, 9);
-                _stylizedOptions.ArcBlendWeight = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Blend Weight:"), _stylizedOptions.ArcBlendWeight, 0.2f, 1.0f);
-                EditorGUI.indentLevel--;
-            }
-
-            EditorGUILayout.EndVertical();
         }
 
         #endregion
@@ -2735,94 +2748,96 @@ namespace TexMotion.Editor.Motion
 
         private void DrawPlaybackControls(Rect rect)
         {
-            GUILayout.BeginArea(rect);
-            EditorGUILayout.BeginHorizontal();
+            if (rect.width <= 10f || rect.height <= 10f) return;
 
-            // First Frame
-            if (GUILayout.Button(new GUIContent("|◀", TexMotionLocalization.Tr(TexMotionLocalization.FirstFrameHome)), _ghostButtonStyle, GUILayout.Width(36), GUILayout.Height(28)))
+            using (new GUILayout.AreaScope(rect))
             {
-                SetCurrentFrame(0);
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    // First Frame
+                    if (GUILayout.Button(new GUIContent("|◀", TexMotionLocalization.Tr(TexMotionLocalization.FirstFrameHome)), _ghostButtonStyle, GUILayout.Width(36), GUILayout.Height(28)))
+                    {
+                        SetCurrentFrame(0);
+                    }
+
+                    // Prev Keyframe (modified frame)
+                    if (GUILayout.Button(new GUIContent("◆◀", TexMotionLocalization.Tr(TexMotionLocalization.PreviousModifiedFrame)), _ghostButtonStyle, GUILayout.Width(36), GUILayout.Height(28)))
+                    {
+                        JumpToPreviousModifiedFrame();
+                    }
+
+                    // Step Back 1 Frame
+                    if (GUILayout.Button(new GUIContent("◀", TexMotionLocalization.Tr(TexMotionLocalization.PreviousFrameLeft)), _ghostButtonStyle, GUILayout.Width(36), GUILayout.Height(28)))
+                    {
+                        SetCurrentFrame(_currentFrame - 1);
+                    }
+
+                    // Play / Pause
+                    string playIcon = _isPlaying
+                        ? TexMotionLocalization.Tr(TexMotionLocalization.Pause)
+                        : TexMotionLocalization.Tr(TexMotionLocalization.Play);
+                    if (GUILayout.Button(new GUIContent(playIcon, TexMotionLocalization.Tr(TexMotionLocalization.TogglePlaybackSpace)), _accentButtonStyle, GUILayout.Width(75), GUILayout.Height(28)))
+                    {
+                        TogglePlay();
+                    }
+
+                    // Step Forward 1 Frame
+                    if (GUILayout.Button(new GUIContent("▶", TexMotionLocalization.Tr(TexMotionLocalization.NextFrameRight)), _ghostButtonStyle, GUILayout.Width(36), GUILayout.Height(28)))
+                    {
+                        SetCurrentFrame(_currentFrame + 1);
+                    }
+
+                    // Next Keyframe
+                    if (GUILayout.Button(new GUIContent("▶◆", TexMotionLocalization.Tr(TexMotionLocalization.NextModifiedFrame)), _ghostButtonStyle, GUILayout.Width(36), GUILayout.Height(28)))
+                    {
+                        JumpToNextModifiedFrame();
+                    }
+
+                    // Last Frame
+                    if (GUILayout.Button(new GUIContent("▶|", TexMotionLocalization.Tr(TexMotionLocalization.LastFrameEnd)), _ghostButtonStyle, GUILayout.Width(36), GUILayout.Height(28)))
+                    {
+                        SetCurrentFrame(_data.Frames - 1);
+                    }
+
+                    EditorGUILayout.Space(12);
+
+                    // Loop Toggle
+                    _isLoop = GUILayout.Toggle(_isLoop, TexMotionLocalization.Tr(TexMotionLocalization.LoopPlayback), _ghostButtonStyle, GUILayout.Width(65), GUILayout.Height(28));
+
+                    EditorGUILayout.Space(8);
+
+                    // Playback Speed (0.1x step)
+                    EditorGUILayout.LabelField(TexMotionLocalization.Tr(TexMotionLocalization.Speed), _metaLabelStyle, GUILayout.Width(44));
+
+                    // Decrease by 0.1x
+                    if (GUILayout.Button(new GUIContent("-0.1", TexMotionLocalization.Tr(TexMotionLocalization.DecreaseSpeed)), _ghostButtonStyle, GUILayout.Width(36), GUILayout.Height(28)))
+                    {
+                        _playbackSpeed = Mathf.Max(0.1f, Mathf.Round((_playbackSpeed - 0.1f) * 10f) / 10f);
+                    }
+
+                    // Current speed indicator & click-to-reset button
+                    if (GUILayout.Button(new GUIContent($"{_playbackSpeed:F1}x", TexMotionLocalization.Tr(TexMotionLocalization.ResetSpeed)), _ghostButtonStyle, GUILayout.Width(46), GUILayout.Height(28)))
+                    {
+                        _playbackSpeed = 1.0f;
+                    }
+
+                    // Increase by 0.1x
+                    if (GUILayout.Button(new GUIContent("+0.1", TexMotionLocalization.Tr(TexMotionLocalization.IncreaseSpeed)), _ghostButtonStyle, GUILayout.Width(36), GUILayout.Height(28)))
+                    {
+                        _playbackSpeed = Mathf.Min(3.0f, Mathf.Round((_playbackSpeed + 0.1f) * 10f) / 10f);
+                    }
+
+                    // 0.1x step slider (0.1 to 3.0)
+                    float newSpeedVal = EditorGUILayout.Slider(_playbackSpeed, 0.1f, 3.0f, GUILayout.Width(110));
+                    _playbackSpeed = Mathf.Round(newSpeedVal * 10f) / 10f;
+
+                    GUILayout.FlexibleSpace();
+
+                    // Timeline Zoom Slider
+                    EditorGUILayout.LabelField(TexMotionLocalization.Tr(TexMotionLocalization.Zoom), _metaLabelStyle, GUILayout.Width(38));
+                    _pixelsPerFrame = EditorGUILayout.Slider(_pixelsPerFrame, 8.0f, 60.0f, GUILayout.Width(110));
+                }
             }
-
-            // Prev Keyframe (modified frame)
-            if (GUILayout.Button(new GUIContent("◆◀", TexMotionLocalization.Tr(TexMotionLocalization.PreviousModifiedFrame)), _ghostButtonStyle, GUILayout.Width(36), GUILayout.Height(28)))
-            {
-                JumpToPreviousModifiedFrame();
-            }
-
-            // Step Back 1 Frame
-            if (GUILayout.Button(new GUIContent("◀", TexMotionLocalization.Tr(TexMotionLocalization.PreviousFrameLeft)), _ghostButtonStyle, GUILayout.Width(36), GUILayout.Height(28)))
-            {
-                SetCurrentFrame(_currentFrame - 1);
-            }
-
-            // Play / Pause
-            string playIcon = _isPlaying
-                ? TexMotionLocalization.Tr(TexMotionLocalization.Pause)
-                : TexMotionLocalization.Tr(TexMotionLocalization.Play);
-            if (GUILayout.Button(new GUIContent(playIcon, TexMotionLocalization.Tr(TexMotionLocalization.TogglePlaybackSpace)), _accentButtonStyle, GUILayout.Width(75), GUILayout.Height(28)))
-            {
-                TogglePlay();
-            }
-
-            // Step Forward 1 Frame
-            if (GUILayout.Button(new GUIContent("▶", TexMotionLocalization.Tr(TexMotionLocalization.NextFrameRight)), _ghostButtonStyle, GUILayout.Width(36), GUILayout.Height(28)))
-            {
-                SetCurrentFrame(_currentFrame + 1);
-            }
-
-            // Next Keyframe
-            if (GUILayout.Button(new GUIContent("▶◆", TexMotionLocalization.Tr(TexMotionLocalization.NextModifiedFrame)), _ghostButtonStyle, GUILayout.Width(36), GUILayout.Height(28)))
-            {
-                JumpToNextModifiedFrame();
-            }
-
-            // Last Frame
-            if (GUILayout.Button(new GUIContent("▶|", TexMotionLocalization.Tr(TexMotionLocalization.LastFrameEnd)), _ghostButtonStyle, GUILayout.Width(36), GUILayout.Height(28)))
-            {
-                SetCurrentFrame(_data.Frames - 1);
-            }
-
-            EditorGUILayout.Space(12);
-
-            // Loop Toggle
-            _isLoop = GUILayout.Toggle(_isLoop, TexMotionLocalization.Tr(TexMotionLocalization.LoopPlayback), _ghostButtonStyle, GUILayout.Width(65), GUILayout.Height(28));
-
-            EditorGUILayout.Space(8);
-
-            // Playback Speed (0.1x step)
-            EditorGUILayout.LabelField(TexMotionLocalization.Tr(TexMotionLocalization.Speed), _metaLabelStyle, GUILayout.Width(44));
-
-            // Decrease by 0.1x
-            if (GUILayout.Button(new GUIContent("-0.1", TexMotionLocalization.Tr(TexMotionLocalization.DecreaseSpeed)), _ghostButtonStyle, GUILayout.Width(36), GUILayout.Height(28)))
-            {
-                _playbackSpeed = Mathf.Max(0.1f, Mathf.Round((_playbackSpeed - 0.1f) * 10f) / 10f);
-            }
-
-            // Current speed indicator & click-to-reset button
-            if (GUILayout.Button(new GUIContent($"{_playbackSpeed:F1}x", TexMotionLocalization.Tr(TexMotionLocalization.ResetSpeed)), _ghostButtonStyle, GUILayout.Width(46), GUILayout.Height(28)))
-            {
-                _playbackSpeed = 1.0f;
-            }
-
-            // Increase by 0.1x
-            if (GUILayout.Button(new GUIContent("+0.1", TexMotionLocalization.Tr(TexMotionLocalization.IncreaseSpeed)), _ghostButtonStyle, GUILayout.Width(36), GUILayout.Height(28)))
-            {
-                _playbackSpeed = Mathf.Min(3.0f, Mathf.Round((_playbackSpeed + 0.1f) * 10f) / 10f);
-            }
-
-            // 0.1x step slider (0.1 to 3.0)
-            float newSpeedVal = EditorGUILayout.Slider(_playbackSpeed, 0.1f, 3.0f, GUILayout.Width(110));
-            _playbackSpeed = Mathf.Round(newSpeedVal * 10f) / 10f;
-
-            GUILayout.FlexibleSpace();
-
-            // Timeline Zoom Slider
-            EditorGUILayout.LabelField(TexMotionLocalization.Tr(TexMotionLocalization.Zoom), _metaLabelStyle, GUILayout.Width(38));
-            _pixelsPerFrame = EditorGUILayout.Slider(_pixelsPerFrame, 8.0f, 60.0f, GUILayout.Width(110));
-
-            EditorGUILayout.EndHorizontal();
-            GUILayout.EndArea();
         }
 
         private void DrawTimelineTrack(Rect rect)
