@@ -2360,8 +2360,7 @@ namespace TexMotion.Editor.Motion
                 _ghostButtonStyle,
                 GUILayout.Height(22)))
             {
-                _data.LockFootPosition(_rangeStartFrame, _rangeEndFrame, isLeftFoot: true);
-                _data.LockFootPosition(_rangeStartFrame, _rangeEndFrame, isLeftFoot: false);
+                _data.LockFootPosition(_rangeStartFrame, _rangeEndFrame, lockLeft: true, lockRight: true);
                 ApplyCurrentFrameToPreview();
                 Repaint();
             }
@@ -2438,7 +2437,7 @@ namespace TexMotion.Editor.Motion
                 bool isSel = (_selectedPaletteSlot == s);
                 string slotLabel = string.Format("{0}{1}", s + 1, has ? "●" : "");
                 Color origCol = GUI.backgroundColor;
-                if (isSel) GUI.backgroundColor = MotionTimelineTheme.ElectricCyan;
+                if (isSel) GUI.backgroundColor = MotionTimelineTheme.SignalTeal;
                 else if (has) GUI.backgroundColor = MotionTimelineTheme.PulseGreen;
                 if (GUILayout.Button(slotLabel, GUILayout.Width(26), GUILayout.Height(22)))
                 {
