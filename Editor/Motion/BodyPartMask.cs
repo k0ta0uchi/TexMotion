@@ -49,6 +49,11 @@ namespace TexMotion.Editor.Motion
             return (mask & jointCategory) != 0;
         }
 
+        public static bool IsJointInMask(SmplxJoint joint, BodyPartMask mask)
+        {
+            return ContainsJoint(mask, joint);
+        }
+
         public static BodyPartMask GetJointCategory(SmplxJoint joint)
         {
             switch (joint)

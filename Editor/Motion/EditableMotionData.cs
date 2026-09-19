@@ -1208,6 +1208,28 @@ namespace TexMotion.Editor.Motion
             FixArmPose(startFrame, endFrame, isLeftArm, behindHead: true);
         }
 
+        /// <summary>
+        /// Applies the stylized hand-keyed motion enhancement suite across [startFrame..endFrame]
+        /// with full Undo/Redo tracking.
+        /// </summary>
+        public bool PolishStylizedMotion(int startFrame, int endFrame, StylizedPolishOptions options, BodyPartMask mask = BodyPartMask.All)
+        {
+            if (options == null || startFrame < 0 || endFrame >= Frames || startFrame > endFrame)
+                return false;
+
+            RecordUndo($"Stylized Hand-Keyed Polish [{startFrame}..{endFrame}]");
+
+            bool success = StylizedMotionPolisher.PolishMotion(this, startFrame, endFrame, options, mask);
+            if (success)
+            {
+                for (int t = startFrame; t <= endFrame; t++)
+                {
+                    _modifiedFrames.Add(t);
+                }
+            }
+            return success;
+        }
+
         #endregion
     }
 }

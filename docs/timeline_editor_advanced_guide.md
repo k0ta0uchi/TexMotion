@@ -185,6 +185,61 @@
 
 ---
 
+## 7. 手付け風クオリティ向上（Stylized Hand-Keyed Polish）
+
+単眼カメラからの AI 姿勢推定で得られたモーションは、全フレームにキーが記録されたベタ打ちデータとなるため、動作速度が均一で緩急に乏しく、全身が同時に動くロボット感や、浮遊感（ウェイト感の不足）が生じやすくなります。
+
+TexMotion は、ディズニーの 12 原則や日本のアニメーション技法に基づく 9 種類の数理・運動学フィルターを備えており、均一なモキャプデータをプロの手付けアニメーションのようなキレと重力感のある動作へと一括昇華させます。
+
+![手付け風クオリティ向上機能ガイド](images/timeline_editor_stylized_polish.jpg)
+
+### 7.1 推奨プリセット
+目的に応じてワンクリックで各パラメータを一括設定できる 3 種類のプリセットを用意しています。
+
+| プリセット | 主な特徴とパラメータ傾向 | 推奨用途 |
+| :--- | :--- | :--- |
+| **⚡ Action (キレ重視)** | スナップ強度 0.70、ポーズ誇張 1.28x、接地クッション 4.5cm、可変コマ打ち（Dynamic Anime） | ゲームアクション、ダンス、ケレン味を重視する表現 |
+| **🏋️ Weight (重量感重視)** | 接地クッション 4.0cm（5f復帰）、コントラポスト 1.30x、ドラッグしなり 0.9f、停止反動 0.30 | 歩行、走行、重量物の運搬、日常動作の接地感強化 |
+| **🍃 Subtle (微調整・自然)** | スナップ強度 0.25、ポーズ誇張 1.08x、接地クッション 2.0cm、アーク整流 0.50 | 実写の自然さを損なわずに AI ノイズと浮遊感のみを除去 |
+
+### 7.2 9つの機能と技術仕様
+
+#### 1. タイミング＆スペーシング（キレと緩急）
+- **Snap & Ease（タメ・ツメ強調）** `[初期設定: ON]`
+  - 関節角速度が閾値（`Hold Threshold`、デフォルト 16°/s）以下の区間を「Moving Hold（微小呼吸のみ維持）」とし、高速遷移区間をエルミート S 字曲線（SmoothStep）でリスペーシングします。均一速度のヌメヌメ感を排除し、パッと動いてスッと止まるメリハリを形成します。
+- **Anime Frame Stepping（可変コマ打ち）** `[初期設定: OFF]`
+  - 日本のリミテッドアニメーション（作画アニメ）表現をエミュレートします。関節角速度に応じて動的に 1 コマ打ち（30fps: アクション）、2 コマ打ち（15fps: 通常動作）、3 コマ打ち（10fps: タメ・静止）のステップ保持を自動切り替えます（Strict 2s / 3s の固定モードも選択可能）。
+- **Keyframe Decimator（キーフレーム削減）** `[初期設定: OFF]`
+  - SO(3) 球面空間上の Ramer-Douglas-Peucker アルゴリズムにより、指定した許容角度誤差（`Tolerance`、デフォルト 2.5°）を満たす極値キーフレーム（Extremes / Breakdowns）のみを抽出し、中間フレームを削減してスプライン補間カーブへ再構成します。
+
+#### 2. ウェイト＆フィジックス（重力と接地感）
+- **Landing Cushion & Bounce（接地衝撃沈み込み）** `[初期設定: ON]`
+  - SMPL-X 骨格の順運動学（FK）により足首および足先の垂直速度を計測し、足裏が地面に到達した着地（Touch-down）の瞬間を検知します。着地直後の骨盤（`RootPositions.y`）に下方向の沈み込み（`Cushion Depth`、デフォルト 3.5cm）を重畳し、減衰正弦波により指定フレーム（`Recovery Frames`、デフォルト 4f）で定位置へ復帰させます。
+- **Contrapposto Booster（骨盤傾斜強調）** `[初期設定: ON]`
+  - 左右の足の接地高さと荷重状態を判定し、体重が乗っている軸足側の骨盤（Pelvis roll）を上方へ傾斜させ、頭部と上半身のバランスを保つために胸郭（Spine1/Spine2）を逆方向へカウンターチルトさせます。人体の美しい立ちポーズと自然な体重移動を再現します。
+
+#### 3. 運動連鎖としなり（ドラッグとフォロースルー）
+- **Kinematic Drag（四肢遅延しなり）** `[初期設定: ON]`
+  - 人体の階層構造（Pelvis → Spine → Shoulder/Neck → Elbow/Head → Wrist）に基づき、末端関節の回転位相を上流関節に対してサブフレーム単位（`Drag Delay`、デフォルト 0.85f）で遅延させます。全身が同時に動いて同時に止まるロボット感を排除し、鞭のような柔らかいしなりと余韻を創出します。
+- **Overshoot & Settling（停止時反動）** `[初期設定: ON]`
+  - 急速なブレーキ（角加速度の急減速）が発生したフレームにおいて、手首や頭部が目標ポーズを一時的に行き過ぎてから減衰振動で収束するスプリング慣性（`Overshoot Amount`、デフォルト 0.35）を自動付加します。
+
+#### 4. ポーズとシルエットの洗練（誇張とアーク）
+- **Pose Exaggeration（ポーズ誇張）** `[初期設定: ON]`
+  - ニュートラル直立姿勢からの各関節の回転角変位をスケール増幅（`Exaggeration Scale`、デフォルト 1.18x）します。AI 推定が無難に小さく丸めてしまいがちなポーズを画面外側へ押し出し（Push）、シルエットの明瞭さと力強さを大幅に向上させます。
+- **Trajectory Arc Smoother（3D円弧整流）** `[初期設定: ON]`
+  - 手首および足首の 3D ワールド座標系列を時間軸平滑化し、カメラ推定ノイズによる直線的・ガタガタした軌道を、美しい円弧（アーク）へと整流します。整流後の目標位置に向けて解析的 2-Bone IK を解き、四肢の関節回転角を再計算します。
+
+### 7.3 操作手順
+1. タイムライン上で修正したい区間を [Set In] / [Set Out] で指定します（クリップ全編に適用する場合は「Entire Clip」を選択）。
+2. 必要に応じて部位マスク（[Body Mask]）を選択し、修正部位を上半身や四肢に限定します。
+3. プリセットボタン（[⚡ Action] / [🏋️ Weight] / [🍃 Subtle]）を押下し、目的に合致する設定を一括ロードします。
+4. こだわりたいパラメータ（誇張スケールや沈み込み深さ等）があれば、各スライダーで微調整します。
+5. 「✨ Polish Motion」ボタンを押下すると、全フィルターが順次適用され、ビューポート上の 3D アバターに即座に反映されます。
+6. 「↩️ 元に戻す（Undo）」と「↪️ やり直す（Redo）」を用いて、修正前後の動作のキレや重力感を比較検証します。
+
+---
+
 # English Guide
 
 ## 1. Overview
@@ -269,3 +324,58 @@ Scans motion data for unnatural tracking artifacts based on high angular velocit
 
 ### 6.2 8-Slot Pose Palette & Blending
 Provides 8 fast-access pose storage slots. Recorded poses can be blended into single frames or across ranges with adjustable weights (0.0 to 1.0) and body part masks.
+
+---
+
+## 7. Stylized Hand-Keyed Polish
+
+Monocular AI pose estimation models typically generate dense, uniform-velocity keyframes that lack the dynamic spacing, timing contrast, and physical weight of handcrafted character animation. Characters often exhibit robotic simultaneity (moving and stopping all limbs in the same frame) and floating sensations caused by weak ground contact responses.
+
+TexMotion addresses this with an integrated suite of 9 kinematic and mathematical filters rooted in the 12 Principles of Animation and stylized Japanese limited animation techniques, elevating raw mocap into punchy, expressive performance.
+
+![Stylized Hand-Keyed Polish Guide](images/timeline_editor_stylized_polish.jpg)
+
+### 7.1 Presets
+Three curated presets provide instant one-click configurations:
+
+| Preset | Key Characteristics & Target Settings | Recommended Use Cases |
+| :--- | :--- | :--- |
+| **⚡ Action** | Snap Intensity 0.70, Pose Exaggeration 1.28x, Landing Cushion 4.5cm, Dynamic Anime Frame Stepping | High-energy game actions, acrobatics, stylized combat, dynamic dance |
+| **🏋️ Weight** | Landing Cushion 4.0cm (5f recovery), Contrapposto 1.30x, Kinematic Drag 0.9f, Overshoot 0.30 | Realistic locomotion, heavy carrying, weight transfers, grounded walks |
+| **🍃 Subtle** | Snap Intensity 0.25, Pose Exaggeration 1.08x, Landing Cushion 2.0cm, Arc Smoothing 0.50 | Gentle cleanup that removes camera jitter and floating while preserving organic realism |
+
+### 7.2 Technical Specifications
+
+#### 1. Timing & Spacing
+- **Snap & Ease (Moving Holds & Punchy Transitions)** `[Default: ON]`
+  - Identifies frames with angular velocity below `Hold Threshold` (default 16°/s) as moving holds with subtle breathing drift. Respaces high-velocity transition spans using cubic Hermite S-curves (SmoothStep), transforming linear mocap into crisp bursts and decisive poses.
+- **Anime Frame Stepping (Limited Animation)** `[Default: OFF]`
+  - Emulates Japanese anime cell animation by adaptively stepping frame poses based on velocity: 1s (30 fps) for rapid action, 2s (15 fps) for standard movement, and 3s (10 fps) for holds (Strict 2s and Strict 3s modes are also supported).
+- **Keyframe Decimator (Curve Simplification)** `[Default: OFF]`
+  - Employs an $SO(3)$ spherical extension of the Ramer-Douglas-Peucker algorithm to preserve only extreme keyframes and breakdowns within a specified angular tolerance (`Tolerance`, default 2.5°), replacing intermediate keys with smooth spline interpolation.
+
+#### 2. Weight & Physics
+- **Landing Cushion & Bounce** `[Default: ON]`
+  - Evaluates forward kinematics (FK) vertical velocities to identify foot touch-down events. Applies a downward compression impulse (`Cushion Depth`, default 3.5cm) to pelvis `RootPositions.y` and settles back to equilibrium via a damped harmonic oscillator across `Recovery Frames` (default 4f).
+- **Contrapposto Booster** `[Default: ON]`
+  - Detects weight-bearing support legs from foot height and ground proximity. Tilts pelvis roll upward on the loaded side and applies a counter-tilt to `Spine1`/`Spine2` to preserve head balance, enforcing classical contrapposto posture.
+
+#### 3. Overlapping & Drag
+- **Kinematic Drag & Follow-Through** `[Default: ON]`
+  - Introduces organic sub-frame phase delays (`Drag Delay`, default 0.85f) to distal joints along the anatomical kinematic chain (`Pelvis` → `Spine` → `Shoulder`/`Neck` → `Elbow`/`Head` → `Wrist`). Eliminates robotic limb simultaneity and creates whip-like fluidity.
+- **Overshoot & Settling** `[Default: ON]`
+  - Detects sharp deceleration events and adds an inertial overshoot past the target pose, damped out with a decaying spring response (`Overshoot Amount`, default 0.35 across `Settle Frames`, default 3f).
+
+#### 4. Pose & Silhouette
+- **Pose Exaggeration (Dynamic Push)** `[Default: ON]`
+  - Extrapolates angular displacement away from the neutral reference posture by `Exaggeration Scale` (default 1.18x). Limb bends and torso twists are deepened, expanding the silhouette for maximum visual readability.
+- **Trajectory Arc Smoother** `[Default: ON]`
+  - Smooths 3D world-space wrist and ankle position trajectories across a Gaussian-weighted window (`Window Size`, default 5f). Analytical 2-Bone IK is re-evaluated to guide limbs along graceful spatial arcs.
+
+### 7.3 Workflow & Best Practices
+1. Define the target frame range using `[Set In]` / `[Set Out]`, or select `Entire Clip`.
+2. Optionally narrow editing scope using `[Body Mask]` (e.g. Upper Body or Arms).
+3. Select an initial preset (`[Action]`, `[Weight]`, or `[Subtle]`).
+4. Fine-tune critical parameters such as `Exaggeration Scale` or `Cushion Depth`.
+5. Click `[✨ Polish Motion]` to apply all active filters atomically.
+6. Use Undo (`Ctrl+Z` / `[↩️ Undo]`) and Redo (`Ctrl+Y` / `[↪️ Redo]`) to compare before and after playback.
