@@ -191,9 +191,13 @@
 
 Monocular motion capture and 3D pose estimation methods (such as HMR2, WHAM, and ViTPose) are prone to tracking noise, limb penetration, and abrupt joint flips caused by occlusions, high-velocity movements, or visual ambiguities. The TexMotion Timeline Editor (`MotionTimelineEditorWindow`) offers an integrated suite of 11 advanced correction tools designed to inspect and refine 3D motion clips directly inside the Unity Editor.
 
+![Timeline Editor Overview](images/timeline_editor_overview.jpg)
+
 ---
 
 ## 2. Viewport Assistance Tools
+
+![Advanced Pose Correction Tools Detail](images/timeline_editor_tools_detail.jpg)
 
 ### 2.1 3D Onion Skin Overlay
 Provides visual continuity during manual keyframe editing by rendering translucent ghost silhouettes of adjacent frames directly in the 3D viewport.

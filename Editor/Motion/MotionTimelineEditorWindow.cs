@@ -156,6 +156,7 @@ namespace TexMotion.Editor.Motion
         private int _selectedPaletteSlot = 0;
         private float _paletteBlendWeight = 1.0f;
         private List<GlitchInfo> _detectedGlitches = new List<GlitchInfo>();
+        private bool _hasScannedGlitches = false;
 
         // GUI Styles
         private GUIStyle _topBarStyle;
@@ -2189,30 +2190,33 @@ namespace TexMotion.Editor.Motion
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button(TexMotionLocalization.TrLiteral("All"), _ghostButtonStyle, GUILayout.Height(18))) _selectedBodyMask = BodyPartMask.All;
-            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Upper"), _ghostButtonStyle, GUILayout.Height(18))) _selectedBodyMask = BodyPartMask.UpperBody;
-            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Lower"), _ghostButtonStyle, GUILayout.Height(18))) _selectedBodyMask = BodyPartMask.LowerBody;
-            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Arms"), _ghostButtonStyle, GUILayout.Height(18))) _selectedBodyMask = BodyPartMask.Arms;
-            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Legs"), _ghostButtonStyle, GUILayout.Height(18))) _selectedBodyMask = BodyPartMask.Legs;
+            if (GUILayout.Button(TexMotionLocalization.TrLiteral("All"), _selectedBodyMask == BodyPartMask.All ? _accentButtonStyle : _ghostButtonStyle, GUILayout.Height(19))) _selectedBodyMask = BodyPartMask.All;
+            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Upper"), _selectedBodyMask == BodyPartMask.UpperBody ? _accentButtonStyle : _ghostButtonStyle, GUILayout.Height(19))) _selectedBodyMask = BodyPartMask.UpperBody;
+            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Lower"), _selectedBodyMask == BodyPartMask.LowerBody ? _accentButtonStyle : _ghostButtonStyle, GUILayout.Height(19))) _selectedBodyMask = BodyPartMask.LowerBody;
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Arms"), _selectedBodyMask == BodyPartMask.Arms ? _accentButtonStyle : _ghostButtonStyle, GUILayout.Height(19))) _selectedBodyMask = BodyPartMask.Arms;
+            if (GUILayout.Button(TexMotionLocalization.TrLiteral("Legs"), _selectedBodyMask == BodyPartMask.Legs ? _accentButtonStyle : _ghostButtonStyle, GUILayout.Height(19))) _selectedBodyMask = BodyPartMask.Legs;
             EditorGUILayout.EndHorizontal();
 
             // Masked actions on current frame
             EditorGUILayout.BeginHorizontal();
             GUI.enabled = EditableMotionData.HasClipboardData;
-            if (GUILayout.Button(new GUIContent(TexMotionLocalization.TrLiteral("📋 Paste Masked"), TexMotionLocalization.TrLiteral("Paste clipboard pose to masked parts only")), _ghostButtonStyle, GUILayout.Height(20)))
+            if (GUILayout.Button(new GUIContent(TexMotionLocalization.TrLiteral("📋 Paste"), TexMotionLocalization.TrLiteral("Paste clipboard pose to masked parts only")), _ghostButtonStyle, GUILayout.Height(21)))
             {
                 _data.PasteFramePose(_currentFrame, _selectedBodyMask);
                 ApplyCurrentFrameToPreview();
                 Repaint();
             }
             GUI.enabled = true;
-            if (GUILayout.Button(new GUIContent(TexMotionLocalization.TrLiteral("↩️ Reset Masked"), TexMotionLocalization.TrLiteral("Reset masked parts to original generated pose")), _ghostButtonStyle, GUILayout.Height(20)))
+            if (GUILayout.Button(new GUIContent(TexMotionLocalization.TrLiteral("↩️ Reset"), TexMotionLocalization.TrLiteral("Reset masked parts to original generated pose")), _ghostButtonStyle, GUILayout.Height(21)))
             {
                 _data.ResetFrameToOriginal(_currentFrame, _selectedBodyMask);
                 ApplyCurrentFrameToPreview();
                 Repaint();
             }
-            if (GUILayout.Button(new GUIContent(TexMotionLocalization.TrLiteral("⚖️ Smooth Masked"), TexMotionLocalization.TrLiteral("Smooth masked parts with neighbor frames")), _ghostButtonStyle, GUILayout.Height(20)))
+            if (GUILayout.Button(new GUIContent(TexMotionLocalization.TrLiteral("⚖️ Smooth"), TexMotionLocalization.TrLiteral("Smooth masked parts with neighbor frames")), _ghostButtonStyle, GUILayout.Height(21)))
             {
                 _data.SmoothFrame(_currentFrame, _selectedBodyMask);
                 ApplyCurrentFrameToPreview();
@@ -2335,7 +2339,7 @@ namespace TexMotion.Editor.Motion
             _groundPlaneY = EditorGUILayout.FloatField(TexMotionLocalization.TrLiteral("Ground Plane Y:"), _groundPlaneY);
             EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button(
-                new GUIContent(TexMotionLocalization.TrLiteral("🦶 Ground (Cur)"), TexMotionLocalization.TrLiteral("Snaps feet to ground plane on current frame")),
+                new GUIContent(TexMotionLocalization.TrLiteral("🦶 Snap (Cur)"), TexMotionLocalization.TrLiteral("Snaps feet to ground plane on current frame")),
                 _ghostButtonStyle,
                 GUILayout.Height(22)))
             {
@@ -2344,7 +2348,7 @@ namespace TexMotion.Editor.Motion
                 Repaint();
             }
             if (GUILayout.Button(
-                new GUIContent(TexMotionLocalization.TrLiteral("🦶 Ground (Range)"), TexMotionLocalization.TrLiteral("Snaps feet to ground plane across In-Out range")),
+                new GUIContent(TexMotionLocalization.TrLiteral("🦶 Snap (Range)"), TexMotionLocalization.TrLiteral("Snaps feet to ground plane across In-Out range")),
                 _ghostButtonStyle,
                 GUILayout.Height(22)))
             {
@@ -2355,8 +2359,10 @@ namespace TexMotion.Editor.Motion
                 ApplyCurrentFrameToPreview();
                 Repaint();
             }
+            EditorGUILayout.EndHorizontal();
+
             if (GUILayout.Button(
-                new GUIContent(TexMotionLocalization.TrLiteral("⚓ Lock Feet"), TexMotionLocalization.TrLiteral("Locks feet positions to prevent sliding across In-Out range")),
+                new GUIContent(TexMotionLocalization.TrLiteral("⚓ Lock Feet Position (Range)"), TexMotionLocalization.TrLiteral("Locks feet positions to prevent sliding across In-Out range")),
                 _ghostButtonStyle,
                 GUILayout.Height(22)))
             {
@@ -2364,7 +2370,6 @@ namespace TexMotion.Editor.Motion
                 ApplyCurrentFrameToPreview();
                 Repaint();
             }
-            EditorGUILayout.EndHorizontal();
             EditorGUILayout.EndVertical();
 
             EditorGUILayout.Space(6);
@@ -2379,6 +2384,7 @@ namespace TexMotion.Editor.Motion
                 GUILayout.Height(24)))
             {
                 _detectedGlitches = GlitchDetector.DetectGlitches(_data);
+                _hasScannedGlitches = true;
             }
             if (_detectedGlitches != null && _detectedGlitches.Count > 0)
             {
@@ -2395,7 +2401,11 @@ namespace TexMotion.Editor.Motion
             }
             EditorGUILayout.EndHorizontal();
 
-            if (_detectedGlitches != null && _detectedGlitches.Count > 0)
+            if (_hasScannedGlitches && (_detectedGlitches == null || _detectedGlitches.Count == 0))
+            {
+                EditorGUILayout.HelpBox(TexMotionLocalization.TrLiteral("✓ No motion glitches or unnatural angular spikes detected in this clip."), MessageType.Info);
+            }
+            else if (_detectedGlitches != null && _detectedGlitches.Count > 0)
             {
                 EditorGUILayout.HelpBox(TexMotionLocalization.TrFormat("⚠️ {0} glitch frame(s) detected!", _detectedGlitches.Count), MessageType.Warning);
                 for (int i = 0; i < Mathf.Min(5, _detectedGlitches.Count); i++)
@@ -2431,15 +2441,32 @@ namespace TexMotion.Editor.Motion
             EditorGUILayout.BeginVertical(_cardStyle);
 
             EditorGUILayout.BeginHorizontal();
-            for (int s = 0; s < 8; s++)
+            for (int s = 0; s < 4; s++)
             {
                 bool has = _posePalette.HasPose(s);
                 bool isSel = (_selectedPaletteSlot == s);
-                string slotLabel = string.Format("{0}{1}", s + 1, has ? "●" : "");
+                string slotLabel = string.Format("Slot {0} {1}", s + 1, has ? "●" : "");
                 Color origCol = GUI.backgroundColor;
                 if (isSel) GUI.backgroundColor = MotionTimelineTheme.SignalTeal;
                 else if (has) GUI.backgroundColor = MotionTimelineTheme.PulseGreen;
-                if (GUILayout.Button(slotLabel, GUILayout.Width(26), GUILayout.Height(22)))
+                if (GUILayout.Button(slotLabel, _ghostButtonStyle, GUILayout.Height(21)))
+                {
+                    _selectedPaletteSlot = s;
+                }
+                GUI.backgroundColor = origCol;
+            }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.BeginHorizontal();
+            for (int s = 4; s < 8; s++)
+            {
+                bool has = _posePalette.HasPose(s);
+                bool isSel = (_selectedPaletteSlot == s);
+                string slotLabel = string.Format("Slot {0} {1}", s + 1, has ? "●" : "");
+                Color origCol = GUI.backgroundColor;
+                if (isSel) GUI.backgroundColor = MotionTimelineTheme.SignalTeal;
+                else if (has) GUI.backgroundColor = MotionTimelineTheme.PulseGreen;
+                if (GUILayout.Button(slotLabel, _ghostButtonStyle, GUILayout.Height(21)))
                 {
                     _selectedPaletteSlot = s;
                 }
@@ -2709,9 +2736,11 @@ namespace TexMotion.Editor.Motion
 
                 Color boxCol = isCurrent
                     ? MotionTimelineTheme.WithAlpha(MotionTimelineTheme.AcidLime, 0.36f)
-                    : (isUncertain
-                        ? MotionTimelineTheme.WithAlpha(MotionTimelineTheme.CoralRed, 0.30f)
-                        : (isModified ? MotionTimelineTheme.WithAlpha(MotionTimelineTheme.PulseGreen, 0.30f) : MotionTimelineTheme.WithAlpha(MotionTimelineTheme.Graphite, 0.72f)));
+                    : (isModified
+                        ? MotionTimelineTheme.WithAlpha(MotionTimelineTheme.PulseGreen, 0.30f)
+                        : (isUncertain
+                            ? MotionTimelineTheme.WithAlpha(MotionTimelineTheme.CoralRed, 0.08f)
+                            : MotionTimelineTheme.WithAlpha(MotionTimelineTheme.Graphite, 0.72f)));
 
                 EditorGUI.DrawRect(frameBox, boxCol);
 
