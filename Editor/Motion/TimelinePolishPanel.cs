@@ -82,6 +82,7 @@ namespace TexMotion.Editor.Motion
             GUILayout.Label(TexMotionLocalization.TrLiteral("Preset"), MotionTimelineTheme.MutedLabel, GUILayout.Width(46f));
 
             DrawPresetButton(window, state, options, TimelinePolishPreset.Action, StylizedPolishPreset.SnappyAction, TexMotionLocalization.TrLiteral("Action"), TexMotionLocalization.TrLiteral("Snappy, high-contrast action anime preset."));
+            DrawPresetButton(window, state, options, TimelinePolishPreset.Dance, StylizedPolishPreset.DanceGroove, TexMotionLocalization.TrLiteral("Dance"), TexMotionLocalization.TrLiteral("Dynamic dance groove with hip sway boost and fluid stepping."));
             DrawPresetButton(window, state, options, TimelinePolishPreset.Weight, StylizedPolishPreset.RealisticWeight, TexMotionLocalization.TrLiteral("Weight"), TexMotionLocalization.TrLiteral("Realistic weight, landing cushions, and natural settling."));
             DrawPresetButton(window, state, options, TimelinePolishPreset.Subtle, StylizedPolishPreset.SubtlePolish, TexMotionLocalization.TrLiteral("Subtle"), TexMotionLocalization.TrLiteral("Subtle natural polish without changing overall timing."));
 
@@ -127,7 +128,7 @@ namespace TexMotion.Editor.Motion
             EditorGUILayout.BeginHorizontal();
             GUILayout.Label(TexMotionLocalization.TrLiteral("Active Filters"), MotionTimelineTheme.MutedLabel);
             GUILayout.FlexibleSpace();
-            GUILayout.Label(TexMotionLocalization.TrLiteralFormat("{0} of 9 enabled", _activeFilterNames.Count), MotionTimelineTheme.MutedLabel);
+            GUILayout.Label(TexMotionLocalization.TrLiteralFormat("{0} of 11 enabled", _activeFilterNames.Count), MotionTimelineTheme.MutedLabel);
             EditorGUILayout.EndHorizontal();
 
             GUILayout.Space(2f);
@@ -177,6 +178,9 @@ namespace TexMotion.Editor.Motion
             if (options.EnableKeyframeDecimator) _activeFilterNames.Add("Decimator");
             if (options.EnableLandingCushion) _activeFilterNames.Add("Landing Cushion");
             if (options.EnableContrapposto) _activeFilterNames.Add("Contrapposto");
+            if (options.EnableHipSwayBoost) _activeFilterNames.Add("Hip Sway Boost");
+            if (options.EnableDanceGrooveDynamics) _activeFilterNames.Add("Dance Dynamics");
+            if (options.PreserveGrounding) _activeFilterNames.Add("Preserve Grounding");
             if (options.EnableKinematicChainDelay) _activeFilterNames.Add("Kinematic Drag");
             if (options.EnableOvershoot) _activeFilterNames.Add("Overshoot");
             if (options.EnablePoseExaggeration) _activeFilterNames.Add("Pose Exaggeration");
@@ -315,6 +319,45 @@ namespace TexMotion.Editor.Motion
                 options.ContrappostoWeight = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Boost Weight"), options.ContrappostoWeight, 0.2f, 2.5f);
                 EditorGUI.indentLevel--;
             }
+
+            GUILayout.Space(6f);
+
+            // Hip Sway & Groove Boost
+            GUIContent swayContent = new GUIContent(TexMotionLocalization.TrLiteral("Hip Sway & Groove Boost"), TexMotionLocalization.TrLiteral("Amplify lateral pelvis sway and tilt for dynamic dance groove."));
+            options.EnableHipSwayBoost = EditorGUILayout.ToggleLeft(swayContent, options.EnableHipSwayBoost, EditorStyles.boldLabel);
+            if (options.EnableHipSwayBoost)
+            {
+                EditorGUI.indentLevel++;
+                options.HipSwayMultiplier = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Sway Multiplier"), options.HipSwayMultiplier, 1.0f, 2.0f);
+                EditorGUI.indentLevel--;
+            }
+
+            GUILayout.Space(6f);
+
+            // Dance Dynamics & Stance Dip
+            GUIContent danceContent = new GUIContent(TexMotionLocalization.TrLiteral("Dance Dynamics & Stance Dip"), TexMotionLocalization.TrLiteral("Deepen wide stance dips, boost vertical beat bounce, and add athletic street posture."));
+            options.EnableDanceGrooveDynamics = EditorGUILayout.ToggleLeft(danceContent, options.EnableDanceGrooveDynamics, EditorStyles.boldLabel);
+            if (options.EnableDanceGrooveDynamics)
+            {
+                EditorGUI.indentLevel++;
+                options.StanceDipWeight = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Stance Dip Weight"), options.StanceDipWeight, 0.0f, 1.0f);
+                options.BeatBounceMultiplier = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Beat Bounce Multiplier"), options.BeatBounceMultiplier, 1.0f, 2.0f);
+                options.TorsoLeanDegrees = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Torso Lean (deg)"), options.TorsoLeanDegrees, 0.0f, 15.0f);
+                EditorGUI.indentLevel--;
+            }
+
+            GUILayout.Space(6f);
+
+            // Preserve Grounding
+            GUIContent groundContent = new GUIContent(TexMotionLocalization.TrLiteral("Preserve Grounding Constraints"), TexMotionLocalization.TrLiteral("Prevent grounded feet from floating when pelvis height or limbs are polished."));
+            options.PreserveGrounding = EditorGUILayout.ToggleLeft(groundContent, options.PreserveGrounding, EditorStyles.boldLabel);
+            if (options.PreserveGrounding)
+            {
+                EditorGUI.indentLevel++;
+                options.GroundTolerance = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Ground Tolerance (m)"), options.GroundTolerance, 0.005f, 0.08f);
+                options.GroundSnapStrength = EditorGUILayout.Slider(TexMotionLocalization.TrLiteral("Snap Strength"), options.GroundSnapStrength, 0.1f, 1.0f);
+                EditorGUI.indentLevel--;
+            }
         }
 
         private static void DrawOverlapDragFilters(StylizedPolishOptions options)
@@ -404,6 +447,9 @@ namespace TexMotion.Editor.Motion
             {
                 case TimelinePolishPreset.Action:
                     options.ApplyPreset(StylizedPolishPreset.SnappyAction);
+                    break;
+                case TimelinePolishPreset.Dance:
+                    options.ApplyPreset(StylizedPolishPreset.DanceGroove);
                     break;
                 case TimelinePolishPreset.Weight:
                     options.ApplyPreset(StylizedPolishPreset.RealisticWeight);

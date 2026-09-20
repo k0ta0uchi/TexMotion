@@ -80,6 +80,170 @@ namespace TexMotion.Editor.VRChat
             return true;
         }
 
+        /// <summary>
+        /// Directly configures synchronized dual-layer playback in VRCAvatarDescriptor:
+        /// - Body AnimationClip in Action Layer
+        /// - Face AnimationClip in FX Layer
+        /// Both driven concurrently by the same Expression Parameter and Menu item.
+        /// </summary>
+        public static bool SetupDirectAvatarMotionWithFace(
+            GameObject targetAvatar,
+            AnimationClip bodyClip,
+            AnimationClip faceClip,
+            VrcMotionConfig config,
+            ScriptableObject customTargetMenu = null,
+            string saveDirectory = "Assets/TexMotion/Generated")
+        {
+            if (targetAvatar == null) throw new ArgumentNullException(nameof(targetAvatar));
+            if (bodyClip == null) throw new ArgumentNullException(nameof(bodyClip));
+
+            if (faceClip == null)
+            {
+                return SetupDirectAvatarMotion(targetAvatar, bodyClip, config, customTargetMenu, saveDirectory);
+            }
+
+            if (!Directory.Exists(saveDirectory))
+            {
+                Directory.CreateDirectory(saveDirectory);
+                AssetDatabase.Refresh();
+            }
+
+            // 1. Find VRCAvatarDescriptor
+            Component descriptor = FindAvatarDescriptor(targetAvatar);
+            if (descriptor == null)
+            {
+                throw new Exception("VRCAvatarDescriptor component was not found on the target avatar.");
+            }
+
+            string sanitizedName = SanitizeFileName(config.MotionName);
+            string paramName = $"TexMotion_{sanitizedName}";
+
+            // 2. Add Parameter to VRCExpressionParameters
+            ScriptableObject exprParams = GetExpressionParameters(descriptor);
+            if (exprParams != null)
+            {
+                AddParameterToExpressionParameters(exprParams, paramName);
+            }
+
+            // 3. Determine Target Menu & Add Menu Item
+            ScriptableObject targetMenu = customTargetMenu ?? GetExpressionsMenu(descriptor);
+            if (targetMenu != null)
+            {
+                if (!AddControlToExpressionsMenu(targetMenu, config, paramName, saveDirectory))
+                {
+                    Debug.LogError(TexMotionLocalization.TrFormat(
+                        TexMotionLocalization.MenuMotionNotAdded,
+                        config.MotionName,
+                        targetMenu.name));
+                }
+            }
+
+            // 4. Setup Action Layer Controller (Body)
+            AnimatorController actionController = EnsureAndAssignLayerControllerSerialized(descriptor, VrcTargetLayer.ActionLayer, saveDirectory);
+            if (actionController != null)
+            {
+                var actionConfig = new VrcMotionConfig
+                {
+                    MotionName = config.MotionName,
+                    MotionType = config.MotionType,
+                    TargetLayer = VrcTargetLayer.ActionLayer
+                };
+                AddStateToAnimatorController(actionController, bodyClip, actionConfig, paramName);
+            }
+
+            // 5. Setup FX Layer Controller (Face)
+            AnimatorController fxController = EnsureAndAssignLayerControllerSerialized(descriptor, VrcTargetLayer.FXLayer, saveDirectory);
+            if (fxController != null)
+            {
+                var fxConfig = new VrcMotionConfig
+                {
+                    MotionName = $"{config.MotionName}_Face",
+                    MotionType = config.MotionType,
+                    TargetLayer = VrcTargetLayer.FXLayer
+                };
+                AddStateToFxAnimatorController(fxController, faceClip, fxConfig, paramName);
+            }
+
+            EditorUtility.SetDirty(targetAvatar);
+            if (exprParams != null) EditorUtility.SetDirty(exprParams);
+            if (targetMenu != null) EditorUtility.SetDirty(targetMenu);
+            AssetDatabase.SaveAssets();
+
+            return true;
+        }
+
+        private static void AddStateToFxAnimatorController(
+            AnimatorController controller,
+            AnimationClip clip,
+            VrcMotionConfig config,
+            string paramName)
+        {
+            // 1. Ensure parameter exists
+            bool hasParam = false;
+            foreach (var p in controller.parameters)
+            {
+                if (p.name == paramName) { hasParam = true; break; }
+            }
+            if (!hasParam)
+            {
+                controller.AddParameter(paramName, AnimatorControllerParameterType.Bool);
+            }
+
+            // 2. Ensure FX layer exists
+            if (controller.layers.Length == 0)
+            {
+                controller.AddLayer("Base Layer");
+            }
+
+            var layers = controller.layers;
+            var fxLayer = layers[0];
+            fxLayer.defaultWeight = 1.0f;
+            controller.layers = layers;
+
+            var sm = fxLayer.stateMachine;
+
+            // Ensure Idle state
+            AnimatorState idleState = sm.defaultState;
+            if (idleState == null)
+            {
+                idleState = sm.AddState("Idle", new Vector3(250, 0, 0));
+                idleState.motion = null;
+                sm.defaultState = idleState;
+            }
+
+            // Add Face Motion State
+            string stateName = config.MotionName;
+            var motionState = sm.AddState(stateName, new Vector3(250, 100, 0));
+            motionState.motion = clip;
+
+            if (config.MotionType == VrcMotionType.OneShotEmote)
+            {
+                var toMotion = idleState.AddTransition(motionState);
+                toMotion.AddCondition(AnimatorConditionMode.If, 0, paramName);
+                toMotion.hasExitTime = false;
+                toMotion.duration = 0.1f;
+
+                var toIdle = motionState.AddTransition(idleState);
+                toIdle.hasExitTime = true;
+                toIdle.exitTime = 0.95f;
+                toIdle.duration = 0.2f;
+            }
+            else // ToggleLoopPose
+            {
+                var toMotion = idleState.AddTransition(motionState);
+                toMotion.AddCondition(AnimatorConditionMode.If, 0, paramName);
+                toMotion.hasExitTime = false;
+                toMotion.duration = 0.15f;
+
+                var toIdle = motionState.AddTransition(idleState);
+                toIdle.AddCondition(AnimatorConditionMode.IfNot, 0, paramName);
+                toIdle.hasExitTime = false;
+                toIdle.duration = 0.15f;
+            }
+
+            EditorUtility.SetDirty(controller);
+        }
+
         public static List<ScriptableObject> FindAllAvatarMenus(GameObject avatar)
         {
             var menus = new List<ScriptableObject>();

@@ -24,7 +24,8 @@ namespace TexMotion.Editor.Motion
         Custom,
         SnappyAction,       // Strong snap & ease, anime 2s-3s stepping, dynamic push
         RealisticWeight,    // Heavy landing cushion, contrapposto, organic kinematic drag
-        SubtlePolish        // Gentle exaggeration, smooth arcs, micro-cushioning
+        SubtlePolish,       // Gentle exaggeration, smooth arcs, micro-cushioning
+        DanceGroove         // Dynamic hip sway, fluid full-framerate dance, open silhouettes, smart velocity-gated grounding
     }
 
     /// <summary>
@@ -51,6 +52,14 @@ namespace TexMotion.Editor.Motion
         public bool EnableContrapposto = true;
         [Range(0.2f, 2.5f)] public float ContrappostoWeight = 1.20f;
 
+        /// <summary>
+        /// Preserves foot grounding contact constraints so feet do not lift off the ground
+        /// when pelvis height or limb angles are altered by polish filters.
+        /// </summary>
+        public bool PreserveGrounding = true;
+        [Range(0.005f, 0.08f)] public float GroundTolerance = 0.02f;
+        [Range(0.1f, 1.0f)] public float GroundSnapStrength = 1.0f;
+
         // 3. Overlapping & Drag
         public bool EnableKinematicChainDelay = true;
         [Range(0.2f, 2.0f)] public float DragDelayFrames = 0.85f;
@@ -66,6 +75,15 @@ namespace TexMotion.Editor.Motion
         public bool EnableTrajectoryArcSmoothing = true;
         [Range(3, 9)] public int ArcSmoothWindow = 5;
         [Range(0.2f, 1.0f)] public float ArcBlendWeight = 0.75f;
+
+        // 5. Pelvis Dynamics & Dance Groove
+        public bool EnableHipSwayBoost = false;
+        [Range(1.0f, 2.0f)] public float HipSwayMultiplier = 1.35f;
+
+        public bool EnableDanceGrooveDynamics = false;
+        [Range(0.0f, 1.0f)] public float StanceDipWeight = 0.70f;
+        [Range(1.0f, 2.0f)] public float BeatBounceMultiplier = 1.35f;
+        [Range(0.0f, 15.0f)] public float TorsoLeanDegrees = 7.5f;
 
         /// <summary>
         /// Applies preset parameter values.
@@ -85,6 +103,9 @@ namespace TexMotion.Editor.Motion
                     CushionRecoveryFrames = 3;
                     EnableContrapposto = true;
                     ContrappostoWeight = 1.40f;
+                    PreserveGrounding = true;
+                    GroundTolerance = 0.015f;
+                    GroundSnapStrength = 1.0f;
                     EnableKinematicChainDelay = true;
                     DragDelayFrames = 1.10f;
                     EnableOvershoot = true;
@@ -92,9 +113,47 @@ namespace TexMotion.Editor.Motion
                     OvershootFrames = 3;
                     EnablePoseExaggeration = true;
                     ExaggerationScale = 1.28f;
+                    EnableHipSwayBoost = false;
+                    HipSwayMultiplier = 1.20f;
+                    EnableDanceGrooveDynamics = false;
+                    StanceDipWeight = 0.50f;
+                    BeatBounceMultiplier = 1.20f;
+                    TorsoLeanDegrees = 0.0f;
                     EnableTrajectoryArcSmoothing = true;
                     ArcSmoothWindow = 5;
                     ArcBlendWeight = 0.85f;
+                    break;
+
+                case StylizedPolishPreset.DanceGroove:
+                    EnableSnapAndEase = true;
+                    SnapIntensity = 0.20f;
+                    HoldThresholdDegPerSec = 14.0f;
+                    StepMode = AnimeStepMode.Off;
+                    EnableKeyframeDecimator = false;
+                    EnableLandingCushion = true;
+                    CushionDepth = 0.035f;
+                    CushionRecoveryFrames = 4;
+                    EnableContrapposto = true;
+                    ContrappostoWeight = 1.30f;
+                    PreserveGrounding = true;
+                    GroundTolerance = 0.025f;
+                    GroundSnapStrength = 0.70f;
+                    EnableKinematicChainDelay = true;
+                    DragDelayFrames = 0.85f;
+                    EnableOvershoot = true;
+                    OvershootAmount = 0.25f;
+                    OvershootFrames = 3;
+                    EnablePoseExaggeration = true;
+                    ExaggerationScale = 1.22f;
+                    EnableHipSwayBoost = true;
+                    HipSwayMultiplier = 1.45f;
+                    EnableDanceGrooveDynamics = true;
+                    StanceDipWeight = 0.75f;
+                    BeatBounceMultiplier = 1.40f;
+                    TorsoLeanDegrees = 7.5f;
+                    EnableTrajectoryArcSmoothing = true;
+                    ArcSmoothWindow = 5;
+                    ArcBlendWeight = 0.70f;
                     break;
 
                 case StylizedPolishPreset.RealisticWeight:
@@ -108,6 +167,9 @@ namespace TexMotion.Editor.Motion
                     CushionRecoveryFrames = 5;
                     EnableContrapposto = true;
                     ContrappostoWeight = 1.30f;
+                    PreserveGrounding = true;
+                    GroundTolerance = 0.02f;
+                    GroundSnapStrength = 1.0f;
                     EnableKinematicChainDelay = true;
                     DragDelayFrames = 0.90f;
                     EnableOvershoot = true;
@@ -115,6 +177,8 @@ namespace TexMotion.Editor.Motion
                     OvershootFrames = 4;
                     EnablePoseExaggeration = true;
                     ExaggerationScale = 1.12f;
+                    EnableHipSwayBoost = false;
+                    HipSwayMultiplier = 1.15f;
                     EnableTrajectoryArcSmoothing = true;
                     ArcSmoothWindow = 7;
                     ArcBlendWeight = 0.70f;
@@ -131,6 +195,9 @@ namespace TexMotion.Editor.Motion
                     CushionRecoveryFrames = 4;
                     EnableContrapposto = true;
                     ContrappostoWeight = 0.80f;
+                    PreserveGrounding = true;
+                    GroundTolerance = 0.025f;
+                    GroundSnapStrength = 0.85f;
                     EnableKinematicChainDelay = true;
                     DragDelayFrames = 0.50f;
                     EnableOvershoot = true;
@@ -138,6 +205,8 @@ namespace TexMotion.Editor.Motion
                     OvershootFrames = 2;
                     EnablePoseExaggeration = true;
                     ExaggerationScale = 1.08f;
+                    EnableHipSwayBoost = false;
+                    HipSwayMultiplier = 1.10f;
                     EnableTrajectoryArcSmoothing = true;
                     ArcSmoothWindow = 5;
                     ArcBlendWeight = 0.50f;
@@ -191,6 +260,18 @@ namespace TexMotion.Editor.Motion
                 ApplyPoseExaggeration(data, startFrame, endFrame, options.ExaggerationScale, mask);
             }
 
+            // 1.5 Pelvis Dynamics & Hip Sway (Inject rhythmic dance groove and lateral weight shift)
+            if (options.EnableHipSwayBoost)
+            {
+                ApplyHipSwayBoost(data, startFrame, endFrame, options.HipSwayMultiplier);
+            }
+
+            // 1.6 Dance Groove & Stance Dynamics (Stance dip, beat bounce, street-dance torso lean)
+            if (options.EnableDanceGrooveDynamics)
+            {
+                ApplyDanceGrooveDynamics(data, startFrame, endFrame, options.StanceDipWeight, options.BeatBounceMultiplier, options.TorsoLeanDegrees);
+            }
+
             // 2. Contrapposto & Pelvis Tilt (Harmonize weight shift between pelvis and spine)
             if (options.EnableContrapposto)
             {
@@ -239,14 +320,20 @@ namespace TexMotion.Editor.Motion
                 ApplyAnimeStepped(data, startFrame, endFrame, options.StepMode);
             }
 
+            // 10. Preserve Grounding Constraints (Post-process hook)
+            if (options.PreserveGrounding)
+            {
+                ApplyPreserveGrounding(data, startFrame, endFrame, options.GroundTolerance, options.GroundSnapStrength);
+            }
+
             return true;
         }
 
-        #region 1. Pose Exaggeration (Dynamic Push)
+        #region 1. Pose Exaggeration (Silhouette & Amplitude Push)
 
         /// <summary>
-        /// Multiplies angular displacement from neutral pose by a scale factor (>1.0),
-        /// pushing limbs outward and deepening poses for greater silhouette clarity.
+        /// Exaggerates pose deviations relative to the clip's local baseline pose,
+        /// pushing silhouettes open and deepening gestural motion while preventing limb collapsing.
         /// </summary>
         public static void ApplyPoseExaggeration(
             EditableMotionData data,
@@ -255,9 +342,39 @@ namespace TexMotion.Editor.Motion
             float scale,
             BodyPartMask mask)
         {
-            if (Mathf.Approximately(scale, 1.0f) || scale <= 0f) return;
+            if (Mathf.Approximately(scale, 1.0f) || scale <= 0f || data == null || data.Frames < 2) return;
 
             int jointCount = SmplxJointDefinitions.JointCount;
+
+            // 1. Compute baseline (average) orientation for each joint across the range.
+            // Pushing deviations relative to baseline magnifies active swings and open gestures
+            // without collapsing resting or downward-hanging arms into the torso.
+            Quaternion[] baseRotations = new Quaternion[jointCount];
+            for (int j = 1; j < jointCount; j++)
+            {
+                if (!BodyPartMaskUtility.IsJointInMask((SmplxJoint)j, mask)) continue;
+
+                Vector4 accum = Vector4.zero;
+                for (int t = startFrame; t <= endFrame; t++)
+                {
+                    Quaternion q = data.LocalRotations[t, j];
+                    if (t > startFrame && Vector4.Dot(accum, new Vector4(q.x, q.y, q.z, q.w)) < 0f)
+                    {
+                        q = new Quaternion(-q.x, -q.y, -q.z, -q.w);
+                    }
+                    accum += new Vector4(q.x, q.y, q.z, q.w);
+                }
+
+                if (accum.sqrMagnitude > 0.0001f)
+                {
+                    accum.Normalize();
+                    baseRotations[j] = new Quaternion(accum.x, accum.y, accum.z, accum.w);
+                }
+                else
+                {
+                    baseRotations[j] = Quaternion.identity;
+                }
+            }
 
             for (int t = startFrame; t <= endFrame; t++)
             {
@@ -265,18 +382,23 @@ namespace TexMotion.Editor.Motion
                 {
                     if (!BodyPartMaskUtility.IsJointInMask((SmplxJoint)j, mask)) continue;
 
-                    Quaternion rot = data.LocalRotations[t, j];
-                    rot.ToAngleAxis(out float angle, out Vector3 axis);
+                    SmplxJoint joint = (SmplxJoint)j;
+                    Quaternion curRot = data.LocalRotations[t, j];
+                    Quaternion qBase = baseRotations[j];
+
+                    if (Quaternion.Dot(curRot, qBase) < 0f)
+                    {
+                        curRot = new Quaternion(-curRot.x, -curRot.y, -curRot.z, -curRot.w);
+                    }
+
+                    // Compute relative deviation from baseline
+                    Quaternion deltaRot = curRot * MotionIkUtility.SafeInverse(qBase);
+                    MotionIkUtility.ToAngleAxisManaged(deltaRot, out float angle, out Vector3 axis);
 
                     if (axis.sqrMagnitude < 0.001f || float.IsNaN(angle) || float.IsInfinity(angle)) continue;
-
                     if (angle > 180f) angle -= 360f;
 
-                    // Clamped push to prevent unnatural joint hyperextension
                     float effectiveScale = scale;
-                    SmplxJoint joint = (SmplxJoint)j;
-
-                    // Moderate head and neck exaggeration to avoid uncanny twists
                     if (joint == SmplxJoint.Neck || joint == SmplxJoint.Head)
                     {
                         effectiveScale = Mathf.Lerp(1.0f, scale, 0.45f);
@@ -284,27 +406,200 @@ namespace TexMotion.Editor.Motion
 
                     float scaledAngle = angle * effectiveScale;
 
-                    // Anatomical safety clamps
-                    if (joint == SmplxJoint.L_Knee || joint == SmplxJoint.R_Knee)
+                    // Joint-specific limits for deviation
+                    if (joint == SmplxJoint.Neck || joint == SmplxJoint.Head)
                     {
-                        // Knees only flex backward (positive X); clamp against hyperextension
-                        scaledAngle = Mathf.Clamp(scaledAngle, -5f, 150f);
+                        scaledAngle = Mathf.Clamp(scaledAngle, -40f, 40f);
+                    }
+                    else if (joint == SmplxJoint.L_Knee || joint == SmplxJoint.R_Knee)
+                    {
+                        scaledAngle = Mathf.Clamp(scaledAngle, -10f, 140f);
                     }
                     else if (joint == SmplxJoint.L_Elbow || joint == SmplxJoint.R_Elbow)
                     {
-                        // Elbows only flex forward/inward; clamp against hyperextension
-                        scaledAngle = Mathf.Clamp(scaledAngle, -5f, 155f);
-                    }
-                    else if (joint == SmplxJoint.Neck || joint == SmplxJoint.Head)
-                    {
-                        scaledAngle = Mathf.Clamp(scaledAngle, -55f, 55f);
+                        scaledAngle = Mathf.Clamp(scaledAngle, -10f, 150f);
                     }
                     else
                     {
-                        scaledAngle = Mathf.Clamp(scaledAngle, -165f, 165f);
+                        scaledAngle = Mathf.Clamp(scaledAngle, -135f, 135f);
                     }
 
-                    data.LocalRotations[t, j] = Quaternion.AngleAxis(scaledAngle, axis.normalized);
+                    Quaternion newRot = MotionIkUtility.AngleAxisManaged(scaledAngle, axis) * qBase;
+
+                    // Silhouette Openness for Shoulders & Elbows:
+                    // Dynamic abduction and elbow flare prevent limbs from collapsing into torso
+                    if (joint == SmplxJoint.L_Shoulder || joint == SmplxJoint.R_Shoulder)
+                    {
+                        float abductionSign = (joint == SmplxJoint.L_Shoulder) ? 1.0f : -1.0f;
+                        float outwardBias = (scale - 1.0f) * 16.0f * abductionSign;
+                        Quaternion biasRot = MotionIkUtility.EulerManaged(0f, 0f, outwardBias);
+                        newRot = newRot * biasRot;
+                    }
+                    else if (joint == SmplxJoint.L_Elbow || joint == SmplxJoint.R_Elbow)
+                    {
+                        float flareSign = (joint == SmplxJoint.L_Elbow) ? 1.0f : -1.0f;
+                        float flareBias = (scale - 1.0f) * 8.0f * flareSign;
+                        Quaternion flareRot = MotionIkUtility.EulerManaged(0f, flareBias, 0f);
+                        newRot = newRot * flareRot;
+                    }
+
+                    data.LocalRotations[t, j] = newRot;
+                }
+            }
+        }
+
+        #endregion
+
+        #region 1.5 Pelvis Dynamics & Dance Groove (Hip Sway Boost)
+
+        /// <summary>
+        /// Amplifies rhythmic lateral sway (X-axis) and roll tilt of the pelvis,
+        /// injecting dynamic dance groove and weight transfer that single-camera mocap under-predicts.
+        /// Preserves the character's global orientation (including 180-degree turnarounds) intact.
+        /// </summary>
+        public static void ApplyHipSwayBoost(
+            EditableMotionData data,
+            int startFrame,
+            int endFrame,
+            float swayMultiplier)
+        {
+            if (swayMultiplier <= 1.01f || data == null || data.Frames < 3) return;
+
+            int totalFrames = data.Frames;
+            int pelvisIdx = (int)SmplxJoint.Pelvis;
+
+            // Moving average window (~0.5s) to isolate low-frequency global travel path
+            int window = Mathf.Clamp((int)(data.FrameRate * 0.5f), 5, 20);
+            float[] baselineX = new float[totalFrames];
+
+            for (int t = 0; t < totalFrames; t++)
+            {
+                int wStart = Mathf.Max(0, t - window);
+                int wEnd = Mathf.Min(totalFrames - 1, t + window);
+                float sumX = 0f;
+                for (int k = wStart; k <= wEnd; k++) sumX += data.RootPositions[k].x;
+                baselineX[t] = sumX / (wEnd - wStart + 1);
+            }
+
+            for (int t = startFrame; t <= endFrame; t++)
+            {
+                // Lateral displacement from baseline
+                float deltaX = data.RootPositions[t].x - baselineX[t];
+                data.RootPositions[t] = new Vector3(
+                    baselineX[t] + deltaX * swayMultiplier,
+                    data.RootPositions[t].y,
+                    data.RootPositions[t].z
+                );
+
+                // Add a natural lateral pelvic roll tilt in local bone space proportional to sway displacement
+                // (Weight shifts to the side -> pelvis tilts slightly toward the weighted hip by 2-6 degrees)
+                // PRESERVES global orientation (Yaw/Turn 180 deg) completely without clamping angle!
+                float rollTiltDeg = Mathf.Clamp(deltaX * 35.0f * (swayMultiplier - 1.0f), -8.0f, 8.0f);
+                if (Mathf.Abs(rollTiltDeg) > 0.05f)
+                {
+                    Quaternion pelvicTilt = MotionIkUtility.EulerManaged(0f, 0f, rollTiltDeg);
+                    data.LocalRotations[t, pelvisIdx] = data.LocalRotations[t, pelvisIdx] * pelvicTilt;
+                }
+            }
+        }
+
+        #endregion
+
+        #region 1.6 Dance Groove & Stance Dynamics
+
+        /// <summary>
+        /// Deepens wide stance dips, amplifies vertical rhythmic bounce,
+        /// and injects forward torso posture for athletic, professional street dance aesthetics.
+        /// </summary>
+        public static void ApplyDanceGrooveDynamics(
+            EditableMotionData data,
+            int startFrame,
+            int endFrame,
+            float stanceDipWeight,
+            float beatBounceMultiplier,
+            float torsoLeanDegrees)
+        {
+            if (data == null || data.Frames < 2) return;
+
+            int totalFrames = data.Frames;
+            int lAnkleIdx = (int)SmplxJoint.L_Ankle;
+            int rAnkleIdx = (int)SmplxJoint.R_Ankle;
+            int lKneeIdx = (int)SmplxJoint.L_Knee;
+            int rKneeIdx = (int)SmplxJoint.R_Knee;
+            int spine1Idx = (int)SmplxJoint.Spine1;
+            int spine2Idx = (int)SmplxJoint.Spine2;
+
+            // 1. Precompute FK ankle positions to evaluate stance width
+            Vector3[] lAnkles = new Vector3[totalFrames];
+            Vector3[] rAnkles = new Vector3[totalFrames];
+            Quaternion[] frameRots = new Quaternion[SmplxJointDefinitions.JointCount];
+
+            for (int t = 0; t < totalFrames; t++)
+            {
+                Vector3 root = data.GetRootPosition(t);
+                for (int j = 0; j < frameRots.Length; j++) frameRots[j] = data.GetJointRotation(t, (SmplxJoint)j);
+                Vector3[] fk = MotionIkUtility.ComputeForwardKinematics(root, frameRots);
+                lAnkles[t] = fk[lAnkleIdx];
+                rAnkles[t] = fk[rAnkleIdx];
+            }
+
+            // 2. Compute moving baseline of RootPositions.y for beat bounce isolation
+            int window = Mathf.Clamp((int)(data.FrameRate * 0.4f), 4, 15);
+            float[] baselineY = new float[totalFrames];
+            for (int t = 0; t < totalFrames; t++)
+            {
+                int wStart = Mathf.Max(0, t - window);
+                int wEnd = Mathf.Min(totalFrames - 1, t + window);
+                float sumY = 0f;
+                for (int k = wStart; k <= wEnd; k++) sumY += data.RootPositions[k].y;
+                baselineY[t] = sumY / (wEnd - wStart + 1);
+            }
+
+            // 3. Apply dynamics per frame
+            for (int t = startFrame; t <= endFrame; t++)
+            {
+                // (A) Vertical Beat Bounce Boost
+                if (beatBounceMultiplier > 1.01f)
+                {
+                    float deltaY = data.RootPositions[t].y - baselineY[t];
+                    data.RootPositions[t] = new Vector3(
+                        data.RootPositions[t].x,
+                        baselineY[t] + deltaY * beatBounceMultiplier,
+                        data.RootPositions[t].z
+                    );
+                }
+
+                // (B) Wide Stance Dip (Lower pelvis Y when feet are spread wide)
+                if (stanceDipWeight > 0.01f)
+                {
+                    float stanceWidth = Vector2.Distance(
+                        new Vector2(lAnkles[t].x, lAnkles[t].z),
+                        new Vector2(rAnkles[t].x, rAnkles[t].z)
+                    );
+
+                    // Standard standing foot width is ~0.25m. Wide dance stance is 0.45m - 0.85m.
+                    float excessWidth = Mathf.Max(0f, stanceWidth - 0.28f);
+                    float dipAmount = Mathf.Clamp(excessWidth * 0.12f, 0f, 0.075f) * stanceDipWeight;
+
+                    if (dipAmount > 0.002f)
+                    {
+                        data.RootPositions[t] += new Vector3(0f, -dipAmount, 0f);
+
+                        // Flex knees naturally to support the lower center of gravity
+                        float kneeFlexDeg = dipAmount * 180.0f; // ~4 to 13 degrees
+                        Quaternion flexRot = MotionIkUtility.EulerManaged(kneeFlexDeg, 0f, 0f);
+                        data.LocalRotations[t, lKneeIdx] = data.LocalRotations[t, lKneeIdx] * flexRot;
+                        data.LocalRotations[t, rKneeIdx] = data.LocalRotations[t, rKneeIdx] * flexRot;
+                    }
+                }
+
+                // (C) Torso Street-Dance Forward Lean
+                if (torsoLeanDegrees > 0.1f)
+                {
+                    // Add slight forward lean to spine1 & spine2 for athletic street-dance posture
+                    Quaternion spineLean = MotionIkUtility.EulerManaged(torsoLeanDegrees * 0.5f, 0f, 0f);
+                    data.LocalRotations[t, spine1Idx] = data.LocalRotations[t, spine1Idx] * spineLean;
+                    data.LocalRotations[t, spine2Idx] = data.LocalRotations[t, spine2Idx] * spineLean;
                 }
             }
         }
@@ -349,11 +644,11 @@ namespace TexMotion.Editor.Motion
                 if (Mathf.Abs(tiltAngleDeg) > 0.3f)
                 {
                     // Tilt Pelvis lateral roll (Z-axis in local space)
-                    Quaternion pelvisTilt = Quaternion.Euler(0f, 0f, tiltAngleDeg);
+                    Quaternion pelvisTilt = MotionIkUtility.EulerManaged(0f, 0f, tiltAngleDeg);
                     data.LocalRotations[t, pelvis] = data.LocalRotations[t, pelvis] * pelvisTilt;
 
                     // Counter-tilt lower and middle spine to keep head balanced
-                    Quaternion spineCounterTilt = Quaternion.Euler(0f, 0f, -tiltAngleDeg * 0.55f);
+                    Quaternion spineCounterTilt = MotionIkUtility.EulerManaged(0f, 0f, -tiltAngleDeg * 0.55f);
                     data.LocalRotations[t, spine1] = data.LocalRotations[t, spine1] * spineCounterTilt;
                     data.LocalRotations[t, spine2] = data.LocalRotations[t, spine2] * spineCounterTilt;
                 }
@@ -517,7 +812,7 @@ namespace TexMotion.Editor.Motion
                     Quaternion q1 = orig[f1];
                     if (Quaternion.Dot(q0, q1) < 0f) q1 = new Quaternion(-q1.x, -q1.y, -q1.z, -q1.w);
 
-                    data.LocalRotations[t, jIdx] = Quaternion.Slerp(q0, q1, frac);
+                    data.LocalRotations[t, jIdx] = MotionIkUtility.SlerpManaged(q0, q1, frac);
                 }
             }
         }
@@ -628,7 +923,7 @@ namespace TexMotion.Editor.Motion
                 float[] angularVel = new float[totalFrames];
                 for (int t = 1; t < totalFrames; t++)
                 {
-                    angularVel[t] = Quaternion.Angle(data.LocalRotations[t - 1, j], data.LocalRotations[t, j]);
+                    angularVel[t] = MotionIkUtility.CalcAngle(data.LocalRotations[t - 1, j], data.LocalRotations[t, j]);
                 }
 
                 for (int t = Mathf.Max(2, startFrame); t < Mathf.Min(endFrame - settleFrames, totalFrames - settleFrames); t++)
@@ -638,8 +933,8 @@ namespace TexMotion.Editor.Motion
                     // Strong deceleration event
                     if (angularVel[t - 1] > 6.0f && accel < -4.0f)
                     {
-                        Quaternion incomingDelta = data.LocalRotations[t, j] * Quaternion.Inverse(data.LocalRotations[t - 1, j]);
-                        incomingDelta.ToAngleAxis(out float dAngle, out Vector3 dAxis);
+                        Quaternion incomingDelta = data.LocalRotations[t, j] * MotionIkUtility.SafeInverse(data.LocalRotations[t - 1, j]);
+                        MotionIkUtility.ToAngleAxisManaged(incomingDelta, out float dAngle, out Vector3 dAxis);
                         if (dAxis.sqrMagnitude < 0.001f) continue;
                         if (dAngle > 180f) dAngle -= 360f;
 
@@ -649,7 +944,7 @@ namespace TexMotion.Editor.Motion
                             float progress = (float)k / settleFrames;
                             // Damped oscillation
                             float impulse = Mathf.Sin(progress * Mathf.PI * 1.5f) * Mathf.Exp(-3.0f * progress) * overshootFactor;
-                            Quaternion deltaRot = Quaternion.AngleAxis(dAngle * impulse, dAxis);
+                            Quaternion deltaRot = MotionIkUtility.AngleAxisManaged(dAngle * impulse, dAxis);
 
                             data.LocalRotations[targetT, j] = data.LocalRotations[targetT, j] * deltaRot;
                         }
@@ -691,7 +986,7 @@ namespace TexMotion.Editor.Motion
 
                 for (int t = startFrame; t <= endFrame; t++)
                 {
-                    float speed = (t > 0) ? Quaternion.Angle(data.LocalRotations[t - 1, j], data.LocalRotations[t, j]) : 0f;
+                    float speed = (t > 0) ? MotionIkUtility.CalcAngle(data.LocalRotations[t - 1, j], data.LocalRotations[t, j]) : 0f;
                     bool isMoving = speed > holdThresholdPerFrame;
 
                     if (isMoving && segStart < 0)
@@ -716,7 +1011,7 @@ namespace TexMotion.Editor.Motion
                                 float easedU = BodyPartMaskUtility.EvaluateEasing(EasingType.SmoothStep, linearU);
                                 float blendedU = Mathf.Lerp(linearU, easedU, snapIntensity);
 
-                                data.LocalRotations[curT, j] = Quaternion.Slerp(qStart, qEnd, blendedU);
+                                data.LocalRotations[curT, j] = MotionIkUtility.SlerpManaged(qStart, qEnd, blendedU);
                             }
                         }
 
@@ -741,7 +1036,7 @@ namespace TexMotion.Editor.Motion
                             float easedU = BodyPartMaskUtility.EvaluateEasing(EasingType.SmoothStep, linearU);
                             float blendedU = Mathf.Lerp(linearU, easedU, snapIntensity);
 
-                            data.LocalRotations[curT, j] = Quaternion.Slerp(qStart, qEnd, blendedU);
+                            data.LocalRotations[curT, j] = MotionIkUtility.SlerpManaged(qStart, qEnd, blendedU);
                         }
                     }
                 }
@@ -792,7 +1087,7 @@ namespace TexMotion.Editor.Motion
                     for (int k = 1; k < span; k++)
                     {
                         float u = (float)k / span;
-                        data.LocalRotations[fA + k, j] = Quaternion.Slerp(qA, qB, u);
+                        data.LocalRotations[fA + k, j] = MotionIkUtility.SlerpManaged(qA, qB, u);
                     }
                 }
             }
@@ -817,8 +1112,8 @@ namespace TexMotion.Editor.Motion
             for (int i = start + 1; i < end; i++)
             {
                 float u = (float)(i - start) / (end - start);
-                Quaternion interp = Quaternion.Slerp(qStart, qEnd, u);
-                float err = Quaternion.Angle(rots[i, joint], interp);
+                Quaternion interp = MotionIkUtility.SlerpManaged(qStart, qEnd, u);
+                float err = MotionIkUtility.CalcAngle(rots[i, joint], interp);
 
                 if (err > maxError)
                 {
@@ -875,7 +1170,7 @@ namespace TexMotion.Editor.Motion
                     if (t > 0)
                     {
                         speed = (data.RootPositions[t] - data.RootPositions[t - 1]).magnitude * 30.0f;
-                        speed += Quaternion.Angle(data.LocalRotations[t - 1, (int)SmplxJoint.L_Wrist], data.LocalRotations[t, (int)SmplxJoint.L_Wrist]) * 0.05f;
+                        speed += MotionIkUtility.CalcAngle(data.LocalRotations[t - 1, (int)SmplxJoint.L_Wrist], data.LocalRotations[t, (int)SmplxJoint.L_Wrist]) * 0.05f;
                     }
 
                     if (speed > 1.8f) currentStepSize = 1;      // Full 1s for fast action
@@ -904,6 +1199,144 @@ namespace TexMotion.Editor.Motion
                         // Step boundary reached, update anchor
                         anchorFrame = t;
                         holdCounter = 1;
+                    }
+                }
+            }
+        }
+
+        #endregion
+
+        #region 10. Post-process: Preserve Grounding Constraints
+
+        /// <summary>
+        /// Re-applies foot grounding constraints post-polish so that pelvis vertical cushion,
+        /// limb exaggeration, and kinematic drag do not cause grounded feet to lift off the floor.
+        /// Includes dynamic velocity gating to preserve active dancing steps and lift-offs.
+        /// </summary>
+        public static void ApplyPreserveGrounding(
+            EditableMotionData data,
+            int startFrame,
+            int endFrame,
+            float tolerance = 0.02f,
+            float snapStrength = 1.0f)
+        {
+            if (data == null || data.Frames < 1) return;
+
+            var contactTrack = data.SourceVideoData?.ContactTrack;
+            bool hasContactTrack = contactTrack != null && contactTrack.intervals != null && contactTrack.intervals.Length > 0;
+
+            const float defaultFloorAnkleY = 0.08f; // Standard SMPL-X ankle height above floor
+            int totalFrames = data.Frames;
+            float dt = 1.0f / Mathf.Max(1.0f, data.FrameRate);
+
+            // Precompute FK foot positions across all frames for velocity evaluation
+            Vector3[] lAnkles = new Vector3[totalFrames];
+            Vector3[] rAnkles = new Vector3[totalFrames];
+            Quaternion[] tempRots = new Quaternion[SmplxJointDefinitions.JointCount];
+
+            for (int t = 0; t < totalFrames; t++)
+            {
+                Vector3 root = data.GetRootPosition(t);
+                for (int j = 0; j < tempRots.Length; j++) tempRots[j] = data.GetJointRotation(t, (SmplxJoint)j);
+                Vector3[] fk = MotionIkUtility.ComputeForwardKinematics(root, tempRots);
+                lAnkles[t] = fk[(int)SmplxJoint.L_Ankle];
+                rAnkles[t] = fk[(int)SmplxJoint.R_Ankle];
+            }
+
+            for (int t = startFrame; t <= endFrame; t++)
+            {
+                bool leftGrounded = false;
+                bool rightGrounded = false;
+                float leftTargetY = defaultFloorAnkleY;
+                float rightTargetY = defaultFloorAnkleY;
+
+                if (hasContactTrack)
+                {
+                    float time = data.Timestamps != null && t < data.Timestamps.Length
+                        ? data.Timestamps[t]
+                        : (data.FrameRate > 0f ? (float)t / data.FrameRate : 0f);
+
+                    foreach (var interval in contactTrack.intervals)
+                    {
+                        if (interval == null) continue;
+                        bool inInterval = (time >= interval.start && time <= interval.end) ||
+                                          (t >= (int)interval.start && t <= (int)interval.end);
+                        if (!inInterval) continue;
+
+                        float anchorY = (interval.anchor != null && interval.anchor.Length >= 3)
+                            ? interval.anchor[1]
+                            : defaultFloorAnkleY;
+
+                        if (string.Equals(interval.foot, "left", StringComparison.OrdinalIgnoreCase))
+                        {
+                            leftGrounded = true;
+                            leftTargetY = anchorY;
+                        }
+                        else if (string.Equals(interval.foot, "right", StringComparison.OrdinalIgnoreCase))
+                        {
+                            rightGrounded = true;
+                            rightTargetY = anchorY;
+                        }
+                    }
+                }
+                else
+                {
+                    // Fallback heuristic if no ContactTrack:
+                    // Feet close to floor are grounded, UNLESS actively lifting off upward (> 0.30 m/s)
+                    float lVy = (t > 0) ? (lAnkles[t].y - lAnkles[t - 1].y) / dt : 0f;
+                    float rVy = (t > 0) ? (rAnkles[t].y - rAnkles[t - 1].y) / dt : 0f;
+
+                    if (lAnkles[t].y < 0.14f && lVy < 0.30f)
+                    {
+                        leftGrounded = true;
+                        leftTargetY = defaultFloorAnkleY;
+                    }
+                    if (rAnkles[t].y < 0.14f && rVy < 0.30f)
+                    {
+                        rightGrounded = true;
+                        rightTargetY = defaultFloorAnkleY;
+                    }
+                }
+
+                // Solve Left Foot Grounding
+                if (leftGrounded)
+                {
+                    float yDelta = Mathf.Abs(lAnkles[t].y - leftTargetY);
+                    if (yDelta > tolerance)
+                    {
+                        Vector3 targetL = new Vector3(lAnkles[t].x, Mathf.Lerp(lAnkles[t].y, leftTargetY, snapStrength), lAnkles[t].z);
+                        bool ikOk = MotionIkUtility.ApplyLimbIK(
+                            data, t, SmplxJoint.L_Hip, SmplxJoint.L_Knee, SmplxJoint.L_Ankle, targetL, recordUndo: false);
+
+                        if (!ikOk || targetL.y > lAnkles[t].y + 0.05f)
+                        {
+                            float reachDeficit = leftTargetY - lAnkles[t].y;
+                            if (reachDeficit < -0.01f)
+                            {
+                                data.RootPositions[t] += new Vector3(0f, reachDeficit * snapStrength * 0.5f, 0f);
+                            }
+                        }
+                    }
+                }
+
+                // Solve Right Foot Grounding
+                if (rightGrounded)
+                {
+                    float yDelta = Mathf.Abs(rAnkles[t].y - rightTargetY);
+                    if (yDelta > tolerance)
+                    {
+                        Vector3 targetR = new Vector3(rAnkles[t].x, Mathf.Lerp(rAnkles[t].y, rightTargetY, snapStrength), rAnkles[t].z);
+                        bool ikOk = MotionIkUtility.ApplyLimbIK(
+                            data, t, SmplxJoint.R_Hip, SmplxJoint.R_Knee, SmplxJoint.R_Ankle, targetR, recordUndo: false);
+
+                        if (!ikOk || targetR.y > rAnkles[t].y + 0.05f)
+                        {
+                            float reachDeficit = rightTargetY - rAnkles[t].y;
+                            if (reachDeficit < -0.01f)
+                            {
+                                data.RootPositions[t] += new Vector3(0f, reachDeficit * snapStrength * 0.5f, 0f);
+                            }
+                        }
                     }
                 }
             }

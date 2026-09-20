@@ -1595,6 +1595,9 @@ namespace TexMotion.Editor.Video
                 optionalStageDiagnostics
             );
 
+            motionData.ContactTrack = dto.contactTrack;
+            motionData.FaceTrack = dto.faceTrack;
+
             if (!motionData.Validate(out string validationError))
             {
                 Debug.LogWarning(TexMotionLocalization.TrFormat(
@@ -2242,6 +2245,8 @@ namespace TexMotion.Editor.Video
             public UncertaintyIntervalJsonDto[] uncertaintyIntervals;
             public OptionalStageDiagnosticJsonDto[] optionalStageDiagnostics;
             public BackendMetadataJsonDto backendMetadata;
+            public ContactTrackData contactTrack;
+            public FaceTrackData faceTrack;
         }
 
         [Serializable]

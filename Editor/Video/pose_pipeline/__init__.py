@@ -37,6 +37,12 @@ from .kinematics import (
     BoneLengthModel
 )
 from .sequence_fit import SequenceOptimizer
+from .face_pipeline import FacePipeline, ARKIT_52_BLENDSHAPES
+from .temporal_repair import (
+    repair_short_gaps_slerp,
+    repair_short_gaps_positions,
+    repair_long_gaps_kinematic_hermite,
+)
 from .vitpose_runner import (
     ViTPoseRunnerError,
     ViTPoseFeatureRunner,
@@ -90,6 +96,11 @@ __all__ = [
     "apply_anatomical_joint_limits",
     "BoneLengthModel",
     "SequenceOptimizer",
+    "FacePipeline",
+    "ARKIT_52_BLENDSHAPES",
+    "repair_short_gaps_slerp",
+    "repair_short_gaps_positions",
+    "repair_long_gaps_kinematic_hermite",
     "ViTPoseRunnerError",
     "ViTPoseFeatureRunner",
     "ViTPoseRunner",

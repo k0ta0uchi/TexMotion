@@ -24,14 +24,16 @@ import json
 import math
 import os
 import sys
+import tempfile
 import time
 import shutil
 import subprocess
 import numpy as np
 
 import urllib.request
-import tempfile
 from pathlib import Path
+from typing import Optional, List, Tuple, Dict, Any, Union
+
 
 # MediaPipe Hybrid API Detection
 MEDIAPIPE_MODE = None  # 'tasks', 'solutions', or None
@@ -68,6 +70,8 @@ try:
     from pose_pipeline.observations import UncertaintyInterval
     from pose_pipeline.kinematics import BoneLengthModel, constrain_knee_flexion
     from pose_pipeline.sequence_fit import SequenceOptimizer
+    from pose_pipeline.face_pipeline import FacePipeline
+    from pose_pipeline.temporal_repair import repair_short_gaps_slerp, repair_long_gaps_kinematic_hermite
     from pose_pipeline.fusion import FusionConfig, fuse_wham_mediapipe, align_observation_sequences, _sequence_values
     from pose_pipeline.backends.rtmpose_backend import RTMPoseBackend
     from pose_pipeline.backends.mediapipe_backend import MediaPipeBackend
@@ -80,6 +84,8 @@ except Exception as exc:
         from pose_pipeline.observations import UncertaintyInterval
         from pose_pipeline.kinematics import BoneLengthModel, constrain_knee_flexion
         from pose_pipeline.sequence_fit import SequenceOptimizer
+        from pose_pipeline.face_pipeline import FacePipeline
+        from pose_pipeline.temporal_repair import repair_short_gaps_slerp, repair_long_gaps_kinematic_hermite
         from pose_pipeline.fusion import FusionConfig, fuse_wham_mediapipe, align_observation_sequences, _sequence_values
         from pose_pipeline.backends.rtmpose_backend import RTMPoseBackend
         from pose_pipeline.backends.mediapipe_backend import MediaPipeBackend
@@ -90,6 +96,9 @@ except Exception as exc:
         POSE_PIPELINE_AVAILABLE = False
         FusionConfig = None
         fuse_wham_mediapipe = None
+        FacePipeline = None
+        repair_short_gaps_slerp = None
+        repair_long_gaps_kinematic_hermite = None
 
 # ============================================================================
 # SMPL-X 22 Joint Hierarchy (Matching SmplxJointDefinitions.cs)
@@ -3320,16 +3329,19 @@ def apply_foot_locking(
     joints_seq: np.ndarray,
     fps: float,
     height_thresh: float = 0.08,
-    vel_thresh: float = 0.45
-) -> np.ndarray:
+    vel_thresh: float = 0.45,
+    return_contact_track: bool = False
+) -> Union[np.ndarray, Tuple[np.ndarray, Dict[str, Any]]]:
     """
     Detects stance/contact phases for left and right feet and snaps the feet to the floor
     during the contact phase to eliminate foot sliding.
     Then analytically adjusts the knee positions via 2-bone IK.
+    If return_contact_track is True, returns (joints, contact_track_dict).
     """
+    empty_contact_track = {"version": 1, "intervals": []}
     T = joints_seq.shape[0]
     if T < 4:
-        return joints_seq
+        return (joints_seq, empty_contact_track) if return_contact_track else joints_seq
 
     result_joints = np.copy(joints_seq)
 
@@ -3347,7 +3359,7 @@ def apply_foot_locking(
     upright_indices = np.where(~is_inverted_mask)[0]
     if len(upright_indices) == 0:
         # Video is entirely inverted (handstand/freeze) - bypass foot locking completely
-        return joints_seq
+        return (joints_seq, empty_contact_track) if return_contact_track else joints_seq
 
     upright_feet_y = np.concatenate([
         result_joints[upright_indices, 7, 1],   # L_Ankle Y
@@ -3358,8 +3370,11 @@ def apply_foot_locking(
     floor_y = float(np.percentile(upright_feet_y, 5.0))
     ankle_offset = 0.06  # typical nominal ankle height above floor
 
+    all_contact_intervals = []
+
     # 2. Compute velocities
     for leg_idx, (hip_i, knee_i, ankle_i, foot_i) in enumerate([(1, 4, 7, 10), (2, 5, 8, 11)]):
+        foot_name = "left" if leg_idx == 0 else "right"
         # Make explicit copies of original positions to avoid view-overwrite bugs
         orig_ankles = np.copy(result_joints[:, ankle_i, :])
         orig_toes = np.copy(result_joints[:, foot_i, :])
@@ -3389,6 +3404,32 @@ def apply_foot_locking(
                     segments.append((start_t, t - 1))
         if in_segment and T - start_t >= 3:
             segments.append((start_t, T - 1))
+
+        # Collect contact track intervals
+        for seg_start, seg_end in segments:
+            anchor_pos = np.median(orig_ankles[seg_start:seg_end + 1], axis=0)
+            anchor_pos[1] = floor_y + ankle_offset
+            seg_vel = vel[seg_start:seg_end + 1]
+            conf = float(np.clip(1.0 - (np.mean(seg_vel) / max(vel_thresh, 1e-5)) * 0.2, 0.5, 0.99))
+
+            # Mode detection
+            toe_y_mean = np.mean(orig_toes[seg_start:seg_end + 1, 1])
+            ankle_y_mean = np.mean(orig_ankles[seg_start:seg_end + 1, 1])
+            if toe_y_mean - ankle_y_mean < -0.04:
+                mode = "toe"
+            elif ankle_y_mean - toe_y_mean < -0.04:
+                mode = "heel"
+            else:
+                mode = "flat"
+
+            all_contact_intervals.append({
+                "foot": foot_name,
+                "start": round(float(seg_start / fps), 3),
+                "end": round(float(seg_end / fps), 3),
+                "mode": mode,
+                "confidence": round(conf, 2),
+                "anchor": [round(float(anchor_pos[0]), 3), round(float(anchor_pos[1]), 3), round(float(anchor_pos[2]), 3)]
+            })
 
         # Apply locking and 2-bone IK adjustment
         for seg_start, seg_end in segments:
@@ -3428,6 +3469,14 @@ def apply_foot_locking(
                     solved_knee = solve_two_bone_ik(p_hip, p_knee, locked_ankle, l1, l2, bend_dir)
                     result_joints[t, knee_i] = solved_knee
 
+    all_contact_intervals.sort(key=lambda x: (x["start"], x["foot"]))
+    contact_track = {
+        "version": 1,
+        "intervals": all_contact_intervals
+    }
+
+    if return_contact_track:
+        return result_joints, contact_track
     return result_joints
 
 
@@ -4904,9 +4953,21 @@ def process_video(
                             )
                         else:
                             quality_overlay_suppressed = True
+                            frame_landmarks = get_default_tpose_landmarks(
+                                invert_y=not canonical_quality_stream
+                            )
+                            frame_coordinate_system = (
+                                "smplx" if canonical_quality_stream else "legacy_overlay"
+                            )
+                            quality_overlay_fallback = True
+                            quality_overlay_fallback_reason = (
+                                str(quality_alignment_reason) +
+                                "; MediaPipe observation unavailable on frame 0, defaulted to safe T-pose"
+                            )
+                            conf = 0.0
                             sys.stderr.write(
                                 f"[TexMotion Warning] Frame {idx}: {quality_alignment_reason}; "
-                                "MediaPipe observation unavailable, suppressing unsafe WHAM overlay.\n"
+                                "MediaPipe observation unavailable, suppressing unsafe WHAM overlay and defaulting to safe pose.\n"
                             )
                     sys.stderr.flush()
 
@@ -5121,8 +5182,11 @@ def process_video(
 
     # Stage 2: Foot Contact Locking (0.60 to 0.75)
     emit_progress(0.62, "foot_locking", 0, total_frames)
+    contact_track = {"version": 1, "intervals": []}
     if foot_lock:
-        joints_seq = apply_foot_locking(joints_seq, fps_out)
+        joints_seq, contact_track = apply_foot_locking(joints_seq, fps_out, return_contact_track=True)
+    elif POSE_PIPELINE_AVAILABLE and 'seq_opt' in locals() and hasattr(seq_opt, "last_contact_track"):
+        contact_track = getattr(seq_opt, "last_contact_track", contact_track)
     emit_progress(0.75, "foot_locking", total_frames, total_frames)
 
     # Stage 3: Analytical 2-Bone IK & Local Rotations (0.75 to 0.88)
@@ -5235,6 +5299,55 @@ def process_video(
                 sys.stderr.write(f"[TexMotion Warning] SO3 smoothing error: {e}\n")
         local_rotations = apply_anatomical_joint_limits(local_rotations)
     emit_progress(0.95, "smoothing", total_frames, total_frames)
+
+    # Stage 5b: Short Dropout Temporal Repair (0.2s SLERP) & Long Gap Kinematic Inpainting (0.2s-2.5s Hermite)
+    repair_provenance = []
+    if POSE_PIPELINE_AVAILABLE and total_frames > 2:
+        try:
+            if repair_short_gaps_slerp is not None:
+                local_rotations, _, short_prov = repair_short_gaps_slerp(
+                    local_rotations,
+                    frame_confidences,
+                    fps=fps_out,
+                    max_gap_seconds=0.2,
+                    confidence_threshold=0.35
+                )
+                if short_prov:
+                    repair_provenance.extend(short_prov)
+
+            if repair_long_gaps_kinematic_hermite is not None:
+                local_rotations, root_positions, _, long_prov = repair_long_gaps_kinematic_hermite(
+                    local_rotations,
+                    frame_confidences,
+                    root_positions=root_positions,
+                    contact_track=contact_track,
+                    fps=fps_out,
+                    min_gap_seconds=0.2,
+                    max_gap_seconds=2.5,
+                    confidence_threshold=0.35,
+                    damping=0.35
+                )
+                if long_prov:
+                    repair_provenance.extend(long_prov)
+
+            local_rotations = apply_anatomical_joint_limits(local_rotations)
+        except Exception as repair_err:
+            sys.stderr.write(f"[TexMotion Warning] Temporal gap repair error: {repair_err}\n")
+
+    # Stage 5c: Facial Blendshapes & Head Rotation (MediaPipe FaceLandmarker)
+    face_track = None
+    if POSE_PIPELINE_AVAILABLE and FacePipeline is not None:
+        try:
+            with FacePipeline(
+                model_directory=video_model_directory,
+                min_detection_confidence=0.3,
+                allow_download=True
+            ) as face_pipe:
+                if face_pipe.is_available:
+                    face_track = face_pipe.process_video(video_path, sample_times)
+        except Exception as face_err:
+            sys.stderr.write(f"[TexMotion Warning] Face pipeline error: {face_err}\n")
+            face_track = None
 
     # Stage 6: Export final JSON matching VideoMotionData schema
     emit_progress(0.96, "exporting", 0, total_frames)
@@ -5475,6 +5588,9 @@ def process_video(
         "jointProvenance": backend_metadata.get("jointProvenance", []),
         "fusionDiagnostics": backend_metadata.get("fusionDiagnostics", {}),
         "uncertaintyIntervals": [ui.to_dict() for ui in uncertainty_intervals] if uncertainty_intervals else [],
+        "contactTrack": contact_track,
+        "faceTrack": face_track,
+        "repairProvenance": repair_provenance,
     }
 
     out_dir = os.path.dirname(os.path.abspath(output_path))
@@ -5711,6 +5827,9 @@ def main():
                 "jointProvenance": [],
                 "fusionDiagnostics": {},
                 "uncertaintyIntervals": [],
+                "contactTrack": {"version": 1, "intervals": []},
+                "faceTrack": None,
+                "repairProvenance": [],
             }
             out_dir = os.path.dirname(os.path.abspath(args.output))
             if out_dir and not os.path.exists(out_dir):

@@ -89,7 +89,7 @@ namespace TexMotion.Editor.Motion
                         DrawPaletteTool(window, data, frame);
                         break;
                     case TimelinePoseTool.HandFace:
-                        DrawHandFaceTool(window, data);
+                        DrawHandFaceTool(window, data, state);
                         break;
                     case TimelinePoseTool.IkPins:
                         DrawIkPinsTool(window, data, frame);
@@ -707,7 +707,7 @@ namespace TexMotion.Editor.Motion
 
         #region Tool 4: Hand & Face Assistance
 
-        private static void DrawHandFaceTool(MotionTimelineEditorWindow window, EditableMotionData data)
+        private static void DrawHandFaceTool(MotionTimelineEditorWindow window, EditableMotionData data, TimelineWorkspaceState state)
         {
             EditorGUILayout.BeginVertical(MotionTimelineTheme.Card);
             GUILayout.Label(TexMotionLocalization.TrLiteral("Hand Gestures"), MotionTimelineTheme.SectionHeader);
@@ -799,6 +799,23 @@ namespace TexMotion.Editor.Motion
                     data.EmotionIntensity = intensity;
                     window.RefreshPreview();
                 }
+            }
+
+            if (data.SourceVideoData?.FaceTrack != null && data.SourceVideoData.FaceTrack.shapes != null && data.SourceVideoData.FaceTrack.shapes.Length > 0)
+            {
+                GUILayout.Space(6f);
+                EditorGUILayout.BeginHorizontal();
+                GUILayout.Label(TexMotionLocalization.TrLiteral("Video Face Track Present"), MotionTimelineTheme.SuccessBadge);
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button(TexMotionLocalization.TrLiteral("Sync in Repair Tab"), MotionTimelineTheme.GhostButton, GUILayout.Height(18f)))
+                {
+                    if (state != null)
+                    {
+                        state.Mode = TimelineInspectorMode.Repair;
+                        state.ActiveRepairTool = TimelineRepairTool.FaceHeadSync;
+                    }
+                }
+                EditorGUILayout.EndHorizontal();
             }
 
             EditorGUILayout.EndVertical();

@@ -22,9 +22,26 @@ namespace TexMotion.Editor.Motion
         public Quaternion[,] LocalRotations { get; private set; } // [Frames, 22]
         public float[] Timestamps { get; private set; }
 
+        /// <summary>
+        /// Gets the exact timestamp in seconds for a given frame index.
+        /// </summary>
+        public float GetTimestamp(int frame)
+        {
+            if (Timestamps != null && frame >= 0 && frame < Timestamps.Length)
+            {
+                return Timestamps[frame];
+            }
+            return FrameRate > 0f ? (float)frame / FrameRate : 0f;
+        }
+
         public GeneratedMotionData OriginalMotionData { get; private set; }
         public VideoMotionData SourceVideoData { get; private set; }
         public Animator TargetAvatar { get; set; }
+
+        /// <summary>
+        /// Foot contact track and ground anchor intervals for foot locking and grounding IK.
+        /// </summary>
+        public ContactTrackData ContactTrack { get; set; }
 
         // Generation options carried over
         public bool InPlace { get; set; } = true;
@@ -51,6 +68,7 @@ namespace TexMotion.Editor.Motion
             public Vector3[] RootPositions;
             public Quaternion[,] LocalRotations;
             public HashSet<int> ModifiedFrames;
+            public ContactTrackData ContactTrack;
         }
 
         private readonly Stack<FrameStateSnapshot> _undoStack = new Stack<FrameStateSnapshot>();
@@ -109,6 +127,15 @@ namespace TexMotion.Editor.Motion
                     LocalRotations[t, j] = rot;
                     _originalLocalRotations[t, j] = rot;
                 }
+            }
+
+            if (SourceVideoData?.ContactTrack != null)
+            {
+                ContactTrack = CloneContactTrack(SourceVideoData.ContactTrack);
+            }
+            else
+            {
+                ContactTrack = new ContactTrackData();
             }
         }
 
@@ -189,7 +216,8 @@ namespace TexMotion.Editor.Motion
                 Description = description,
                 RootPositions = (Vector3[])RootPositions.Clone(),
                 LocalRotations = (Quaternion[,])LocalRotations.Clone(),
-                ModifiedFrames = new HashSet<int>(_modifiedFrames)
+                ModifiedFrames = new HashSet<int>(_modifiedFrames),
+                ContactTrack = CloneContactTrack(ContactTrack)
             };
 
             _undoStack.Push(snapshot);
@@ -214,7 +242,8 @@ namespace TexMotion.Editor.Motion
                 Description = "Current",
                 RootPositions = (Vector3[])RootPositions.Clone(),
                 LocalRotations = (Quaternion[,])LocalRotations.Clone(),
-                ModifiedFrames = new HashSet<int>(_modifiedFrames)
+                ModifiedFrames = new HashSet<int>(_modifiedFrames),
+                ContactTrack = CloneContactTrack(ContactTrack)
             };
             _redoStack.Push(currentState);
 
@@ -232,7 +261,8 @@ namespace TexMotion.Editor.Motion
                 Description = "Current",
                 RootPositions = (Vector3[])RootPositions.Clone(),
                 LocalRotations = (Quaternion[,])LocalRotations.Clone(),
-                ModifiedFrames = new HashSet<int>(_modifiedFrames)
+                ModifiedFrames = new HashSet<int>(_modifiedFrames),
+                ContactTrack = CloneContactTrack(ContactTrack)
             };
             _undoStack.Push(currentState);
 
@@ -250,6 +280,7 @@ namespace TexMotion.Editor.Motion
             {
                 _modifiedFrames.Add(f);
             }
+            ContactTrack = CloneContactTrack(snapshot.ContactTrack);
         }
 
         #endregion
@@ -1048,7 +1079,7 @@ namespace TexMotion.Editor.Motion
         {
             if (SourceVideoData != null)
             {
-                return new VideoMotionData(
+                var vmd = new VideoMotionData(
                     Frames,
                     SmplxJointDefinitions.JointCount,
                     (Vector3[])RootPositions.Clone(),
@@ -1074,15 +1105,18 @@ namespace TexMotion.Editor.Motion
                     overlaySource: SourceVideoData.OverlaySource,
                     backendMetadata: SourceVideoData.BackendMetadata
                 );
+                vmd.ContactTrack = CloneContactTrack(ContactTrack);
+                return vmd;
             }
 
-            return new GeneratedMotionData(
+            var gmd = new GeneratedMotionData(
                 Frames,
                 SmplxJointDefinitions.JointCount,
                 (Vector3[])RootPositions.Clone(),
                 (Quaternion[,])LocalRotations.Clone(),
                 FrameRate
             );
+            return gmd;
         }
 
         /// <summary>
@@ -1275,6 +1309,376 @@ namespace TexMotion.Editor.Motion
                 }
             }
             return success;
+        }
+
+        /// <summary>
+        /// Applies analytical self-penetration avoidance across [startFrame..endFrame] with Undo/Redo tracking.
+        /// </summary>
+        public bool ApplySelfPenetrationAvoidance(int startFrame, int endFrame, PenetrationOptions options = null)
+        {
+            if (startFrame < 0 || endFrame >= Frames || startFrame > endFrame)
+                return false;
+
+            RecordUndo($"Self-Penetration Avoidance [{startFrame}..{endFrame}]");
+
+            bool success = PenetrationConstraintSolver.SolvePenetration(this, startFrame, endFrame, options);
+            if (success)
+            {
+                for (int t = startFrame; t <= endFrame; t++)
+                {
+                    _modifiedFrames.Add(t);
+                }
+            }
+            return success;
+        }
+
+        #region Contact Track & Grounding Operations
+
+        /// <summary>
+        /// Deep copies a ContactTrackData instance.
+        /// </summary>
+        public static ContactTrackData CloneContactTrack(ContactTrackData source)
+        {
+            if (source == null) return new ContactTrackData();
+            var copy = new ContactTrackData
+            {
+                version = source.version,
+                intervals = new ContactIntervalData[source.intervals != null ? source.intervals.Length : 0]
+            };
+            if (source.intervals != null)
+            {
+                for (int i = 0; i < source.intervals.Length; i++)
+                {
+                    var item = source.intervals[i];
+                    if (item != null)
+                    {
+                        copy.intervals[i] = new ContactIntervalData
+                        {
+                            foot = item.foot,
+                            start = item.start,
+                            end = item.end,
+                            mode = item.mode ?? "flat",
+                            confidence = item.confidence,
+                            anchor = item.anchor != null ? (float[])item.anchor.Clone() : null
+                        };
+                    }
+                }
+            }
+            return copy;
+        }
+
+        /// <summary>
+        /// Adds a foot contact interval with Undo tracking.
+        /// </summary>
+        public void AddContactInterval(string foot, float start, float end, string mode = "flat", float confidence = 1.0f, float[] anchor = null)
+        {
+            RecordUndo($"Add Contact Interval ({foot} [{start:F2}s..{end:F2}s])");
+            if (ContactTrack == null) ContactTrack = new ContactTrackData();
+            var list = new List<ContactIntervalData>(ContactTrack.intervals ?? Array.Empty<ContactIntervalData>());
+            list.Add(new ContactIntervalData
+            {
+                foot = foot?.ToLowerInvariant() ?? "left",
+                start = Mathf.Min(start, end),
+                end = Mathf.Max(start, end),
+                mode = mode ?? "flat",
+                confidence = Mathf.Clamp01(confidence),
+                anchor = anchor != null ? (float[])anchor.Clone() : null
+            });
+            ContactTrack.intervals = list.ToArray();
+        }
+
+        /// <summary>
+        /// Removes a foot contact interval at the given index with Undo tracking.
+        /// </summary>
+        public bool RemoveContactInterval(int index)
+        {
+            if (ContactTrack?.intervals == null || index < 0 || index >= ContactTrack.intervals.Length)
+                return false;
+
+            RecordUndo($"Remove Contact Interval #{index}");
+            var list = new List<ContactIntervalData>(ContactTrack.intervals);
+            list.RemoveAt(index);
+            ContactTrack.intervals = list.ToArray();
+            return true;
+        }
+
+        /// <summary>
+        /// Updates an existing contact interval with Undo tracking.
+        /// </summary>
+        public bool UpdateContactInterval(int index, float start, float end, string mode = null, float? confidence = null, float[] anchor = null)
+        {
+            if (ContactTrack?.intervals == null || index < 0 || index >= ContactTrack.intervals.Length)
+                return false;
+
+            RecordUndo($"Update Contact Interval #{index}");
+            var item = ContactTrack.intervals[index];
+            item.start = Mathf.Min(start, end);
+            item.end = Mathf.Max(start, end);
+            if (!string.IsNullOrEmpty(mode)) item.mode = mode;
+            if (confidence.HasValue) item.confidence = Mathf.Clamp01(confidence.Value);
+            if (anchor != null) item.anchor = (float[])anchor.Clone();
+            return true;
+        }
+
+        /// <summary>
+        /// Clears all contact intervals with Undo tracking.
+        /// </summary>
+        public void ClearContactIntervals()
+        {
+            RecordUndo("Clear Contact Intervals");
+            if (ContactTrack != null)
+            {
+                ContactTrack.intervals = Array.Empty<ContactIntervalData>();
+            }
+        }
+
+        /// <summary>
+        /// Returns all contact intervals, optionally filtered by foot ("left" or "right").
+        /// </summary>
+        public List<ContactIntervalData> GetContactIntervals(string foot = null)
+        {
+            var result = new List<ContactIntervalData>();
+            if (ContactTrack?.intervals == null) return result;
+            foreach (var interval in ContactTrack.intervals)
+            {
+                if (interval == null) continue;
+                if (string.IsNullOrEmpty(foot) || string.Equals(interval.foot, foot, StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Add(interval);
+                }
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Checks if a foot is in contact at the given timestamp in seconds.
+        /// </summary>
+        public bool IsFootInContact(string foot, float timeInSeconds)
+        {
+            if (ContactTrack?.intervals == null) return false;
+            foreach (var interval in ContactTrack.intervals)
+            {
+                if (interval == null) continue;
+                if (string.Equals(interval.foot, foot, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (timeInSeconds >= interval.start && timeInSeconds <= interval.end)
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Checks if a foot is in contact at the given frame index.
+        /// </summary>
+        public bool IsFootInContact(string foot, int frame)
+        {
+            float t = (Timestamps != null && frame >= 0 && frame < Timestamps.Length)
+                ? Timestamps[frame]
+                : (float)frame / (FrameRate > 0 ? FrameRate : 30.0f);
+            return IsFootInContact(foot, t);
+        }
+
+        /// <summary>
+        /// Returns the active contact interval for the specified foot at a given timestamp, or null if airborne.
+        /// </summary>
+        public ContactIntervalData GetActiveContactInterval(string foot, float timeInSeconds)
+        {
+            if (ContactTrack?.intervals == null) return null;
+            foreach (var interval in ContactTrack.intervals)
+            {
+                if (interval == null) continue;
+                if (string.Equals(interval.foot, foot, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (timeInSeconds >= interval.start && timeInSeconds <= interval.end)
+                        return interval;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Returns the active contact interval for the specified foot at a given frame, or null if airborne.
+        /// </summary>
+        public ContactIntervalData GetActiveContactInterval(string foot, int frame)
+        {
+            float t = (Timestamps != null && frame >= 0 && frame < Timestamps.Length)
+                ? Timestamps[frame]
+                : (float)frame / (FrameRate > 0 ? FrameRate : 30.0f);
+            return GetActiveContactInterval(foot, t);
+        }
+
+        /// <summary>
+        /// Auto-detects foot contact intervals based on foot velocity and floor clearance with Undo tracking.
+        /// </summary>
+        public void AutoDetectContactTrack(float velocityThreshold = 0.20f, float heightThreshold = 0.12f)
+        {
+            RecordUndo("Auto Detect Contact Track");
+            ContactConstraintSolver.DetectContactIntervals(this, velocityThreshold, heightThreshold);
+        }
+
+        /// <summary>
+        /// Applies avatar bone-length-adapted foot grounding constraint across the clip and bakes into motion.
+        /// </summary>
+        /// <param name="avatar">Target avatar Animator (or null to use TargetAvatar / standard fallback).</param>
+        /// <param name="blendWeight">Constraint blending weight [0.0..1.0].</param>
+        public void ApplyAvatarGroundingConstraint(Animator avatar, float blendWeight = 1.0f)
+        {
+            ApplyAvatarGroundingConstraint(avatar, blendWeight, 0f, 0.08f);
+        }
+
+        /// <summary>
+        /// Applies avatar bone-length-adapted foot grounding constraint across the clip or range.
+        /// Uses ContactConstraintSolver to lock sliding feet to anchors and ground soles accurately.
+        /// </summary>
+        public bool ApplyAvatarGroundingConstraint(
+            Animator avatar = null,
+            float blendWeight = 1.0f,
+            float groundPlaneY = 0f,
+            float ankleOffset = 0.08f)
+        {
+            var anim = avatar != null ? avatar : TargetAvatar;
+            RecordUndo($"Apply Avatar Grounding Constraint (Weight={blendWeight:F2})");
+
+            bool ok = ContactConstraintSolver.Solve(this, anim, blendWeight, groundPlaneY);
+            if (!ok)
+            {
+                ok = ApplyBuiltinAvatarGrounding(anim, blendWeight, groundPlaneY, ankleOffset);
+            }
+
+            if (ok)
+            {
+                for (int t = 0; t < Frames; t++)
+                {
+                    _modifiedFrames.Add(t);
+                }
+            }
+            return ok;
+        }
+
+        #endregion
+
+        private bool ApplyBuiltinAvatarGrounding(Animator anim, float blendWeight, float groundPlaneY, float ankleOffset)
+        {
+            var contactTrack = SourceVideoData?.ContactTrack;
+            bool hasIntervals = contactTrack != null && contactTrack.intervals != null && contactTrack.intervals.Length > 0;
+
+            float targetFootY = groundPlaneY + ankleOffset;
+            bool modified = false;
+
+            for (int t = 0; t < Frames; t++)
+            {
+                bool leftContact = true;
+                bool rightContact = true;
+
+                if (hasIntervals)
+                {
+                    float time = Timestamps != null && t < Timestamps.Length ? Timestamps[t] : (float)t / FrameRate;
+                    leftContact = false;
+                    rightContact = false;
+
+                    foreach (var interval in contactTrack.intervals)
+                    {
+                        if (interval == null) continue;
+                        bool inRange = (time >= interval.start && time <= interval.end) ||
+                                       (t >= (int)interval.start && t <= (int)interval.end);
+                        if (inRange)
+                        {
+                            if (string.Equals(interval.foot, "left", StringComparison.OrdinalIgnoreCase))
+                                leftContact = true;
+                            else if (string.Equals(interval.foot, "right", StringComparison.OrdinalIgnoreCase))
+                                rightContact = true;
+                        }
+                    }
+                }
+
+                // Compute current FK foot positions
+                Vector3 root = GetRootPosition(t);
+                var curRots = new Quaternion[SmplxJointDefinitions.JointCount];
+                for (int j = 0; j < curRots.Length; j++) curRots[j] = GetJointRotation(t, (SmplxJoint)j);
+                var fk = MotionIkUtility.ComputeForwardKinematics(root, curRots);
+
+                if (leftContact)
+                {
+                    Vector3 curL = fk[(int)SmplxJoint.L_Ankle];
+                    Vector3 targetL = new Vector3(curL.x, Mathf.Lerp(curL.y, targetFootY, blendWeight), curL.z);
+                    if (MotionIkUtility.ApplyLimbIK(this, t, SmplxJoint.L_Hip, SmplxJoint.L_Knee, SmplxJoint.L_Ankle, targetL, recordUndo: false))
+                    {
+                        modified = true;
+                    }
+                }
+
+                if (rightContact)
+                {
+                    Vector3 curR = fk[(int)SmplxJoint.R_Ankle];
+                    Vector3 targetR = new Vector3(curR.x, Mathf.Lerp(curR.y, targetFootY, blendWeight), curR.z);
+                    if (MotionIkUtility.ApplyLimbIK(this, t, SmplxJoint.R_Hip, SmplxJoint.R_Knee, SmplxJoint.R_Ankle, targetR, recordUndo: false))
+                    {
+                        modified = true;
+                    }
+                }
+
+                if (modified)
+                {
+                    _modifiedFrames.Add(t);
+                }
+            }
+
+            return modified;
+        }
+
+        /// <summary>
+        /// Interpolates low-confidence outlier frames across the clip with Undo tracking.
+        /// </summary>
+        public void InterpolateLowConfidenceOutliers(float minConfidenceThreshold = 0.3f)
+        {
+            RecordUndo("Interpolate Low Confidence Outliers");
+            if (SourceVideoData != null)
+            {
+                SourceVideoData.InterpolateOutliers(minConfidenceThreshold);
+
+                // Re-sync RootPositions and LocalRotations from SourceVideoData
+                for (int t = 0; t < Frames; t++)
+                {
+                    RootPositions[t] = SourceVideoData.RootPositions[t];
+                    for (int j = 0; j < SmplxJointDefinitions.JointCount; j++)
+                    {
+                        LocalRotations[t, j] = SourceVideoData.LocalRotations[t, j];
+                    }
+                    _modifiedFrames.Add(t);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Inpaints medium-to-long tracking dropouts (0.2s to 2.5s) using Kinematic Hermite Splines
+        /// and SO(3) Squad interpolation with Undo tracking.
+        /// </summary>
+        public int InpaintGapsKinematicHermite(
+            float minConfidenceThreshold = 0.35f,
+            float minGapSeconds = 0.2f,
+            float maxGapSeconds = 2.5f,
+            float damping = 0.35f)
+        {
+            RecordUndo("Kinematic Hermite Gap Inpaint");
+            int inpainted = 0;
+            if (SourceVideoData != null)
+            {
+                inpainted = SourceVideoData.InpaintGapsKinematicHermite(
+                    minConfidenceThreshold, minGapSeconds, maxGapSeconds, damping);
+
+                // Re-sync RootPositions and LocalRotations from SourceVideoData
+                for (int t = 0; t < Frames; t++)
+                {
+                    RootPositions[t] = SourceVideoData.RootPositions[t];
+                    for (int j = 0; j < SmplxJointDefinitions.JointCount; j++)
+                    {
+                        LocalRotations[t, j] = SourceVideoData.LocalRotations[t, j];
+                    }
+                    _modifiedFrames.Add(t);
+                }
+            }
+            return inpainted;
         }
 
         #endregion

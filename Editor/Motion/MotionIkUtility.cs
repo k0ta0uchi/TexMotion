@@ -64,7 +64,7 @@ namespace TexMotion.Editor.Motion
             worldPositions = new Vector3[jointCount];
             worldRotations = new Quaternion[jointCount];
 
-            worldPositions[0] = rootPosition + DefaultJointOffsets[SmplxJoint.Pelvis];
+            worldPositions[0] = rootPosition.y > 0.5f ? rootPosition : rootPosition + DefaultJointOffsets[SmplxJoint.Pelvis];
             worldRotations[0] = localRotations != null && localRotations.Length > 0 ? localRotations[0] : Quaternion.identity;
 
             for (int i = 1; i < jointCount; i++)
@@ -147,17 +147,99 @@ namespace TexMotion.Editor.Motion
             // Desired mid position
             Vector3 desiredMid = rootPos + (targetDir * (l1 * Mathf.Cos(angleRootRad))) + (bendDir * (l1 * Mathf.Sin(angleRootRad)));
 
-            // Compute rotations
-            Quaternion rotToMid = Quaternion.FromToRotation(curL1, desiredMid - rootPos);
+            // Compute rotations using pure managed FromToRotation for maximum portability and speed
+            Quaternion rotToMid = SafeFromToRotation(curL1, desiredMid - rootPos);
             Vector3 rotatedMid = rootPos + (rotToMid * curL1);
             Vector3 rotatedEnd = rotatedMid + (rotToMid * curL2);
 
-            Quaternion rotToEnd = Quaternion.FromToRotation(rotatedEnd - rotatedMid, targetPos - rotatedMid);
+            Quaternion rotToEnd = SafeFromToRotation(rotatedEnd - rotatedMid, targetPos - rotatedMid);
 
             rootDeltaRot = rotToMid;
             midDeltaRot = rotToEnd;
 
             return true;
+        }
+
+        /// <summary>
+        /// Pure managed calculation of FromToRotation without relying on native engine icalls.
+        /// </summary>
+        public static Quaternion SafeFromToRotation(Vector3 from, Vector3 to)
+        {
+            Vector3 v0 = from.normalized;
+            Vector3 v1 = to.normalized;
+            float d = Vector3.Dot(v0, v1);
+            if (d >= 0.999999f)
+            {
+                return Quaternion.identity;
+            }
+            if (d <= -0.999999f)
+            {
+                Vector3 axis = Vector3.Cross(Vector3.right, v0);
+                if (axis.sqrMagnitude < 0.0001f)
+                    axis = Vector3.Cross(Vector3.up, v0);
+                axis.Normalize();
+                return new Quaternion(axis.x, axis.y, axis.z, 0f);
+            }
+
+            Vector3 a = Vector3.Cross(v0, v1);
+            float w = 1f + d;
+            float mag = Mathf.Sqrt(a.x * a.x + a.y * a.y + a.z * a.z + w * w);
+            if (mag > 0.00001f)
+            {
+                return new Quaternion(a.x / mag, a.y / mag, a.z / mag, w / mag);
+            }
+            return Quaternion.identity;
+        }
+
+        /// <summary>
+        /// Pure managed quaternion inverse calculation.
+        /// </summary>
+        public static Quaternion SafeInverse(Quaternion q)
+        {
+            float lengthSq = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
+            if (lengthSq > 0.00001f)
+            {
+                float inv = 1f / lengthSq;
+                return new Quaternion(-q.x * inv, -q.y * inv, -q.z * inv, q.w * inv);
+            }
+            return Quaternion.identity;
+        }
+
+        /// <summary>
+        /// Pure managed quaternion spherical linear interpolation.
+        /// </summary>
+        public static Quaternion SafeSlerp(Quaternion a, Quaternion b, float t)
+        {
+            float dot = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+            if (dot < 0.0f)
+            {
+                b = new Quaternion(-b.x, -b.y, -b.z, -b.w);
+                dot = -dot;
+            }
+
+            if (dot > 0.9995f)
+            {
+                float rx = a.x + (b.x - a.x) * t;
+                float ry = a.y + (b.y - a.y) * t;
+                float rz = a.z + (b.z - a.z) * t;
+                float rw = a.w + (b.w - a.w) * t;
+                float mag = Mathf.Sqrt(rx * rx + ry * ry + rz * rz + rw * rw);
+                return mag > 0.00001f ? new Quaternion(rx / mag, ry / mag, rz / mag, rw / mag) : Quaternion.identity;
+            }
+
+            float theta = Mathf.Acos(Mathf.Clamp(dot, -1f, 1f));
+            float sinTheta = Mathf.Sin(theta);
+            if (Mathf.Abs(sinTheta) < 0.0001f) return a;
+
+            float wa = Mathf.Sin((1f - t) * theta) / sinTheta;
+            float wb = Mathf.Sin(t * theta) / sinTheta;
+
+            return new Quaternion(
+                wa * a.x + wb * b.x,
+                wa * a.y + wb * b.y,
+                wa * a.z + wb * b.z,
+                wa * a.w + wb * b.w
+            );
         }
 
         /// <summary>
@@ -226,11 +308,11 @@ namespace TexMotion.Editor.Motion
 
             // 1. Calculate new Upper world rotation and convert to local space
             Quaternion newUpperWorld = rootDeltaRot * curUpperWorld;
-            Quaternion newUpperLocal = Quaternion.Inverse(parentWorld) * newUpperWorld;
+            Quaternion newUpperLocal = SafeInverse(parentWorld) * newUpperWorld;
 
             // 2. Calculate new Mid world rotation and convert to local space (relative to new Upper)
             Quaternion newMidWorld = midDeltaRot * (rootDeltaRot * curMidWorld);
-            Quaternion newMidLocal = Quaternion.Inverse(newUpperWorld) * newMidWorld;
+            Quaternion newMidLocal = SafeInverse(newUpperWorld) * newMidWorld;
 
             if (recordUndo)
             {
@@ -242,5 +324,119 @@ namespace TexMotion.Editor.Motion
 
             return true;
         }
+
+        /// <summary>
+        /// Pure managed calculation of angular difference between two Quaternions in degrees.
+        /// Does not rely on Unity native InternalCalls, safe for tests and batch execution.
+        /// </summary>
+        public static float CalcAngle(Quaternion a, Quaternion b)
+        {
+            float dot = Mathf.Clamp(Mathf.Abs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w), -1f, 1f);
+            return Mathf.Acos(dot) * 2f * Mathf.Rad2Deg;
+        }
+
+        /// <summary>
+        /// Pure managed extraction of Angle and Axis from a Quaternion.
+        /// </summary>
+        public static void ToAngleAxisManaged(Quaternion q, out float angle, out Vector3 axis)
+        {
+            float qw = Mathf.Clamp(q.w, -1f, 1f);
+            angle = 2f * Mathf.Acos(Mathf.Abs(qw)) * Mathf.Rad2Deg;
+            float sinHalf = Mathf.Sqrt(Mathf.Max(0f, 1f - qw * qw));
+            if (sinHalf < 0.0001f)
+            {
+                axis = Vector3.up;
+            }
+            else
+            {
+                float sign = qw < 0f ? -1f : 1f;
+                axis = new Vector3(q.x * sign / sinHalf, q.y * sign / sinHalf, q.z * sign / sinHalf);
+            }
+        }
+
+        /// <summary>
+        /// Pure managed creation of a Quaternion from an axis and angle in degrees.
+        /// </summary>
+        public static Quaternion AngleAxisManaged(float angleDeg, Vector3 axis)
+        {
+            float halfRad = (angleDeg * 0.5f) * Mathf.Deg2Rad;
+            float s = Mathf.Sin(halfRad);
+            Vector3 normAxis = axis.sqrMagnitude > 0.00001f ? axis.normalized : Vector3.up;
+            return new Quaternion(normAxis.x * s, normAxis.y * s, normAxis.z * s, Mathf.Cos(halfRad));
+        }
+
+        /// <summary>
+        /// Pure managed spherical linear interpolation (Slerp) between two Quaternions.
+        /// Does not rely on Unity native InternalCalls, safe for standalone CLI and tests.
+        /// </summary>
+        public static Quaternion SlerpManaged(Quaternion a, Quaternion b, float t)
+        {
+            t = Mathf.Clamp01(t);
+            float dot = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+
+            if (dot < 0.0f)
+            {
+                b = new Quaternion(-b.x, -b.y, -b.z, -b.w);
+                dot = -dot;
+            }
+
+            if (dot > 0.9995f)
+            {
+                Quaternion result = new Quaternion(
+                    a.x + t * (b.x - a.x),
+                    a.y + t * (b.y - a.y),
+                    a.z + t * (b.z - a.z),
+                    a.w + t * (b.w - a.w)
+                );
+                return NormalizeManaged(result);
+            }
+
+            float theta0 = Mathf.Acos(Mathf.Clamp(dot, -1f, 1f));
+            float theta = theta0 * t;
+            float sinTheta = Mathf.Sin(theta);
+            float sinTheta0 = Mathf.Sin(theta0);
+
+            float s0 = Mathf.Cos(theta) - dot * sinTheta / sinTheta0;
+            float s1 = sinTheta / sinTheta0;
+
+            return new Quaternion(
+                s0 * a.x + s1 * b.x,
+                s0 * a.y + s1 * b.y,
+                s0 * a.z + s1 * b.z,
+                s0 * a.w + s1 * b.w
+            );
+        }
+
+        /// <summary>
+        /// Pure managed normalization of a Quaternion.
+        /// </summary>
+        public static Quaternion NormalizeManaged(Quaternion q)
+        {
+            float mag = Mathf.Sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+            if (mag < 0.00001f) return Quaternion.identity;
+            return new Quaternion(q.x / mag, q.y / mag, q.z / mag, q.w / mag);
+        }
+
+        /// <summary>
+        /// Pure managed Euler-to-Quaternion conversion (Z-X-Y intrinsic / Unity Euler convention).
+        /// Safe for standalone tests and CLI tools without Unity internal calls.
+        /// </summary>
+        public static Quaternion EulerManaged(float x, float y, float z)
+        {
+            float rx = x * 0.5f * Mathf.Deg2Rad;
+            float ry = y * 0.5f * Mathf.Deg2Rad;
+            float rz = z * 0.5f * Mathf.Deg2Rad;
+            float sinX = Mathf.Sin(rx), cosX = Mathf.Cos(rx);
+            float sinY = Mathf.Sin(ry), cosY = Mathf.Cos(ry);
+            float sinZ = Mathf.Sin(rz), cosZ = Mathf.Cos(rz);
+            return new Quaternion(
+                sinX * cosY * cosZ - cosX * sinY * sinZ,
+                cosX * sinY * cosZ + sinX * cosY * sinZ,
+                cosX * cosY * sinZ - sinX * sinY * cosZ,
+                cosX * cosY * cosZ + sinX * sinY * sinZ
+            );
+        }
+
+        public static Quaternion EulerManaged(Vector3 euler) => EulerManaged(euler.x, euler.y, euler.z);
     }
 }

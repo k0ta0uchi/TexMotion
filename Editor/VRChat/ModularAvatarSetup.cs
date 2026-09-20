@@ -129,6 +129,92 @@ namespace TexMotion.Editor.VRChat
             return motionObj;
         }
 
+        /// <summary>
+        /// Sets up synchronized dual-layer playback using Modular Avatar:
+        /// - Body AnimationClip mapped to Action Layer
+        /// - Face AnimationClip mapped to FX Layer
+        /// Both driven concurrently by the same Expression Menu toggle/button parameter.
+        /// </summary>
+        public static GameObject SetupAvatarMotionWithFace(
+            GameObject targetAvatar,
+            AnimationClip bodyClip,
+            AnimationClip faceClip,
+            VrcMotionConfig config,
+            string saveDirectory = "Assets/TexMotion/Generated")
+        {
+            if (targetAvatar == null) throw new ArgumentNullException(nameof(targetAvatar));
+            if (bodyClip == null) throw new ArgumentNullException(nameof(bodyClip));
+
+            if (faceClip == null)
+            {
+                return SetupAvatarMotion(targetAvatar, bodyClip, config, saveDirectory);
+            }
+
+            if (!Directory.Exists(saveDirectory))
+            {
+                Directory.CreateDirectory(saveDirectory);
+                AssetDatabase.Refresh();
+            }
+
+            string sanitizedName = SanitizeFileName(config.MotionName);
+
+            // 1. Create Action Layer Controller (Body)
+            string actionCtrlPath = $"{saveDirectory}/Ctrl_{sanitizedName}_Action.controller";
+            var actionConfig = new VrcMotionConfig
+            {
+                MotionName = config.MotionName,
+                MotionType = config.MotionType,
+                TargetLayer = VrcTargetLayer.ActionLayer
+            };
+            var actionController = CreateMotionAnimatorController(actionCtrlPath, bodyClip, actionConfig);
+
+            // 2. Create FX Layer Controller (Face)
+            string fxCtrlPath = $"{saveDirectory}/Ctrl_{sanitizedName}_FX.controller";
+            var fxController = CreateFxAnimatorController(fxCtrlPath, faceClip, config);
+
+            // 3. Create or find child hierarchy under avatar root
+            string objectName = $"TexMotion_{sanitizedName}";
+            Transform existingChild = targetAvatar.transform.Find(objectName);
+            GameObject motionObj;
+            if (existingChild != null)
+            {
+                motionObj = existingChild.gameObject;
+            }
+            else
+            {
+                motionObj = new GameObject(objectName);
+                motionObj.transform.SetParent(targetAvatar.transform, false);
+            }
+
+            Undo.RegisterCreatedObjectUndo(motionObj, $"Setup TexMotion with Face: {config.MotionName}");
+
+            // 4. Attach synchronized child objects with Modular Avatar MergeAnimators
+            // Child 1: Action (Body)
+            GameObject actionObj = GetOrCreateChildObject(motionObj.transform, "Action_Body");
+            AttachSingleMergeAnimator(actionObj, actionController, VrcTargetLayer.ActionLayer);
+
+            // Child 2: FX (Face)
+            GameObject fxObj = GetOrCreateChildObject(motionObj.transform, "FX_Face");
+            AttachSingleMergeAnimator(fxObj, fxController, VrcTargetLayer.FXLayer);
+
+            // 5. Attach shared Menu Item & Parameters to root motionObj
+            AttachMenuAndParameters(motionObj, config);
+
+            EditorUtility.SetDirty(targetAvatar);
+            AssetDatabase.SaveAssets();
+
+            return motionObj;
+        }
+
+        private static GameObject GetOrCreateChildObject(Transform parent, string name)
+        {
+            Transform child = parent.Find(name);
+            if (child != null) return child.gameObject;
+            var obj = new GameObject(name);
+            obj.transform.SetParent(parent, false);
+            return obj;
+        }
+
         private static AnimatorController CreateMotionAnimatorController(string path, AnimationClip clip, VrcMotionConfig config)
         {
             var controller = AnimatorController.CreateAnimatorControllerAtPath(path);
@@ -197,11 +283,57 @@ namespace TexMotion.Editor.VRChat
             return controller;
         }
 
-        private static void AttachModularAvatarComponents(GameObject motionObj, RuntimeAnimatorController controller, VrcMotionConfig config)
+        private static AnimatorController CreateFxAnimatorController(string path, AnimationClip clip, VrcMotionConfig config)
         {
+            var controller = AnimatorController.CreateAnimatorControllerAtPath(path);
             string paramName = $"TexMotion_{SanitizeFileName(config.MotionName)}";
+            controller.AddParameter(paramName, AnimatorControllerParameterType.Bool);
 
-            // 1. ModularAvatarMergeAnimator
+            var layer = controller.layers[0];
+            layer.name = $"{config.MotionName}_Face";
+            layer.defaultWeight = 1.0f;
+
+            var stateMachine = layer.stateMachine;
+
+            // Idle State (No motion)
+            var idleState = stateMachine.AddState("Idle", new Vector3(250, 0, 0));
+            idleState.motion = null;
+            stateMachine.defaultState = idleState;
+
+            // Face Motion State
+            var faceState = stateMachine.AddState($"{config.MotionName}_Face", new Vector3(250, 100, 0));
+            faceState.motion = clip;
+
+            if (config.MotionType == VrcMotionType.OneShotEmote)
+            {
+                var toMotion = idleState.AddTransition(faceState);
+                toMotion.AddCondition(AnimatorConditionMode.If, 0, paramName);
+                toMotion.hasExitTime = false;
+                toMotion.duration = 0.1f;
+
+                var toIdle = faceState.AddTransition(idleState);
+                toIdle.hasExitTime = true;
+                toIdle.exitTime = 0.95f;
+                toIdle.duration = 0.2f;
+            }
+            else // ToggleLoopPose
+            {
+                var toMotion = idleState.AddTransition(faceState);
+                toMotion.AddCondition(AnimatorConditionMode.If, 0, paramName);
+                toMotion.hasExitTime = false;
+                toMotion.duration = 0.15f;
+
+                var toIdle = faceState.AddTransition(idleState);
+                toIdle.AddCondition(AnimatorConditionMode.IfNot, 0, paramName);
+                toIdle.hasExitTime = false;
+                toIdle.duration = 0.15f;
+            }
+
+            return controller;
+        }
+
+        private static void AttachSingleMergeAnimator(GameObject targetObj, RuntimeAnimatorController controller, VrcTargetLayer layer)
+        {
             Type mergeAnimatorType = Type.GetType("nadena.dev.modular_avatar.core.ModularAvatarMergeAnimator, nadena.dev.modular-avatar.core");
             if (mergeAnimatorType == null)
             {
@@ -214,22 +346,32 @@ namespace TexMotion.Editor.VRChat
 
             if (mergeAnimatorType != null)
             {
-                var mergeComp = motionObj.GetComponent(mergeAnimatorType) ?? motionObj.AddComponent(mergeAnimatorType);
+                var mergeComp = targetObj.GetComponent(mergeAnimatorType) ?? targetObj.AddComponent(mergeAnimatorType);
                 var animatorField = mergeAnimatorType.GetField("animator");
                 animatorField?.SetValue(mergeComp, controller);
 
                 var layerTypeField = mergeAnimatorType.GetField("layerType");
                 if (layerTypeField != null)
                 {
-                    int layerIndex = config.TargetLayer == VrcTargetLayer.ActionLayer ? 3 : 4;
+                    int layerIndex = layer == VrcTargetLayer.ActionLayer ? 3 : 4;
                     layerTypeField.SetValue(mergeComp, Enum.ToObject(layerTypeField.FieldType, layerIndex));
                 }
 
                 var deleteAttachedField = mergeAnimatorType.GetField("deleteAttachedAnimator");
                 deleteAttachedField?.SetValue(mergeComp, true);
             }
+        }
 
-            // 2. ModularAvatarMenuItem
+        private static void AttachModularAvatarComponents(GameObject motionObj, RuntimeAnimatorController controller, VrcMotionConfig config)
+        {
+            AttachSingleMergeAnimator(motionObj, controller, config.TargetLayer);
+            AttachMenuAndParameters(motionObj, config);
+        }
+
+        private static void AttachMenuAndParameters(GameObject motionObj, VrcMotionConfig config)
+        {
+            string paramName = $"TexMotion_{SanitizeFileName(config.MotionName)}";
+
             Type menuItemType = Type.GetType("nadena.dev.modular_avatar.core.ModularAvatarMenuItem, nadena.dev.modular-avatar.core");
             if (menuItemType == null)
             {

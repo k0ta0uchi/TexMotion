@@ -1,6 +1,6 @@
 {
   "name": "com.k0ta0uchi.texmotion",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "displayName": "TexMotion",
   "description": "Generate 3D avatar animations from text prompts or video pose extraction, inspect & tweak poses frame-by-frame in Timeline Editor, and setup for VRChat avatars.",
   "unity": "2022.3",

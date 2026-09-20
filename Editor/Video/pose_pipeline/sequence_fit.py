@@ -658,6 +658,80 @@ class SequenceOptimizer:
                 out_pos[t, 1] = max(floor_y, out_pos[t, 1])
         return out_pos
 
+    def build_contact_track(
+        self,
+        l_contact: np.ndarray,
+        r_contact: np.ndarray,
+        l_foot_pos: Optional[np.ndarray] = None,
+        r_foot_pos: Optional[np.ndarray] = None,
+        root_positions: Optional[np.ndarray] = None,
+        timestamps: Optional[List[float]] = None
+    ) -> Dict[str, Any]:
+        """
+        Builds contact track interval dictionary from contact boolean arrays.
+        Matches VideoMotionData ContactTrackData JSON schema.
+        """
+        intervals: List[Dict[str, Any]] = []
+        frames = len(l_contact)
+
+        def _extract(contact_flags: np.ndarray, foot_name: str, foot_positions: Optional[np.ndarray]):
+            in_seg = False
+            start_t = 0
+            for t in range(frames):
+                if contact_flags[t] and not in_seg:
+                    in_seg = True
+                    start_t = t
+                elif not contact_flags[t] and in_seg:
+                    in_seg = False
+                    end_t = t - 1
+                    if end_t - start_t + 1 >= 2:
+                        start_time = timestamps[start_t] if timestamps else round(float(start_t / self.fps), 3)
+                        end_time = timestamps[end_t] if timestamps else round(float(end_t / self.fps), 3)
+                        if foot_positions is not None and len(foot_positions) > end_t:
+                            seg_pos = foot_positions[start_t:end_t + 1]
+                            if root_positions is not None and len(root_positions) > end_t:
+                                seg_pos = seg_pos + root_positions[start_t:end_t + 1]
+                            anchor = [round(float(v), 3) for v in np.median(seg_pos, axis=0)]
+                        else:
+                            anchor = [0.15 if foot_name == "left" else -0.15, 0.0, 0.0]
+                        intervals.append({
+                            "foot": foot_name,
+                            "start": float(start_time),
+                            "end": float(end_time),
+                            "mode": "flat",
+                            "confidence": 0.95,
+                            "anchor": anchor
+                        })
+            if in_seg:
+                end_t = frames - 1
+                if end_t - start_t + 1 >= 2:
+                    start_time = timestamps[start_t] if timestamps else round(float(start_t / self.fps), 3)
+                    end_time = timestamps[end_t] if timestamps else round(float(end_t / self.fps), 3)
+                    if foot_positions is not None and len(foot_positions) > end_t:
+                        seg_pos = foot_positions[start_t:end_t + 1]
+                        if root_positions is not None and len(root_positions) > end_t:
+                            seg_pos = seg_pos + root_positions[start_t:end_t + 1]
+                        anchor = [round(float(v), 3) for v in np.median(seg_pos, axis=0)]
+                    else:
+                        anchor = [0.15 if foot_name == "left" else -0.15, 0.0, 0.0]
+                    intervals.append({
+                        "foot": foot_name,
+                        "start": float(start_time),
+                        "end": float(end_time),
+                        "mode": "flat",
+                        "confidence": 0.95,
+                        "anchor": anchor
+                    })
+
+        _extract(l_contact, "left", l_foot_pos)
+        _extract(r_contact, "right", r_foot_pos)
+        intervals.sort(key=lambda x: (x["start"], x["foot"]))
+        return {
+            "version": 1,
+            "intervals": intervals
+        }
+
+
     def resolve_arm_occlusion_multi_hypothesis(
         self,
         frames_3d: List[Optional[np.ndarray]],
@@ -893,6 +967,9 @@ class SequenceOptimizer:
         r_foot_pos = out_joints[:, 11] if out_joints.shape[1] > 11 else out_joints[:, 8]
         l_contact, r_contact = self.apply_foot_contact_hysteresis(
             root_positions, l_foot_pos, r_foot_pos, vel_threshold=0.15
+        )
+        self.last_contact_track = self.build_contact_track(
+            l_contact, r_contact, l_foot_pos, r_foot_pos, root_positions
         )
 
         all_uncertainties.sort(key=lambda u: u.start_frame)

@@ -36,7 +36,8 @@ namespace TexMotion.Editor.Motion
         MotionGlitches = 1,
         FootGrounding = 2,
         PenetrationLimiter = 3,
-        Offset = 4
+        Offset = 4,
+        FaceHeadSync = 5
     }
 
     /// <summary>
@@ -66,9 +67,10 @@ namespace TexMotion.Editor.Motion
     public enum TimelinePolishPreset
     {
         Action = 0,
-        Weight = 1,
-        Subtle = 2,
-        Custom = 3
+        Dance = 1,
+        Weight = 2,
+        Subtle = 3,
+        Custom = 4
     }
 
     /// <summary>

@@ -19,6 +19,11 @@ namespace TexMotion.Editor.Motion
         public float EmotionIntensity;
         public float MinConfidenceThreshold; // Optional confidence filter for VideoMotionData
         public float GroundingOffset; // Vertical offset to align feet with ground plane
+        public FaceMappingProfile FaceMapping; // Facial blendshape mapping profile
+        public SkinnedMeshRenderer TargetFaceRenderer; // Optional direct facial renderer reference
+        public bool ApplyHeadRotationFromFace; // Blend video-tracked head rotation onto Head bone
+        public float HeadRotationBlendWeight; // Blend weight for head rotation [0.0, 1.0]
+        public bool ExportFaceOnly; // Generate only face blendshape curves (for VRChat FX Layer)
 
         public static AnimationBuildOptions CreateDefault(
             string clipName = "TexMotion_Anim",
@@ -38,7 +43,12 @@ namespace TexMotion.Editor.Motion
                 FaceEmotion = faceEmotion,
                 EmotionIntensity = 1.0f,
                 MinConfidenceThreshold = 0f,
-                GroundingOffset = 0f
+                GroundingOffset = 0f,
+                FaceMapping = null,
+                TargetFaceRenderer = null,
+                ApplyHeadRotationFromFace = false,
+                HeadRotationBlendWeight = 1.0f,
+                ExportFaceOnly = false
             };
         }
     }
@@ -55,6 +65,22 @@ namespace TexMotion.Editor.Motion
         public static AnimationClip BuildAnimationClip(VideoMotionData videoMotionData, AnimationBuildOptions options)
         {
             return BuildAnimationClip((GeneratedMotionData)videoMotionData, options);
+        }
+
+        /// <summary>
+        /// Alias for BuildAnimationClip conforming to specification requirements.
+        /// </summary>
+        public static AnimationClip BuildClip(VideoMotionData videoMotionData, AnimationBuildOptions options)
+        {
+            return BuildAnimationClip(videoMotionData, options);
+        }
+
+        /// <summary>
+        /// Alias for BuildAnimationClip conforming to specification requirements.
+        /// </summary>
+        public static AnimationClip BuildClip(GeneratedMotionData motionData, AnimationBuildOptions options)
+        {
+            return BuildAnimationClip(motionData, options);
         }
 
         /// <summary>
@@ -83,15 +109,33 @@ namespace TexMotion.Editor.Motion
             };
 
             float dt = 1.0f / clip.frameRate;
+            VideoMotionData videoData = motionData as VideoMotionData;
 
-            if (options.TargetAvatar != null && options.TargetAvatar.isHuman && options.TargetAvatar.avatar != null)
+            // FX Layer / Face-only export mode
+            if (options.ExportFaceOnly)
+            {
+                BuildFaceTrackCurves(clip, videoData, options, dt, frames);
+            }
+            else if (options.TargetAvatar != null && options.TargetAvatar.isHuman && options.TargetAvatar.avatar != null)
             {
                 BuildHumanoidMuscleCurves(clip, motionData, options, dt, frames);
-                BuildFaceCurves(clip, motionData, options, dt, frames);
+                // If FaceTrack exists in video motion, build dynamic blendshape curves; otherwise fallback to static FaceEmotion
+                if (videoData != null && videoData.FaceTrack != null && videoData.FaceTrack.shapes != null && videoData.FaceTrack.shapes.Length > 0)
+                {
+                    BuildFaceTrackCurves(clip, videoData, options, dt, frames);
+                }
+                else
+                {
+                    BuildFaceCurves(clip, motionData, options, dt, frames);
+                }
             }
             else
             {
                 BuildGenericCurves(clip, motionData, options, dt, frames);
+                if (videoData != null && videoData.FaceTrack != null && videoData.FaceTrack.shapes != null && videoData.FaceTrack.shapes.Length > 0)
+                {
+                    BuildFaceTrackCurves(clip, videoData, options, dt, frames);
+                }
             }
 
 #if UNITY_EDITOR
@@ -201,6 +245,15 @@ namespace TexMotion.Editor.Motion
                         Quaternion smplRot = motionData.LocalRotations[t, (int)joint];
                         Quaternion rest = initialRotations[joint];
                         Quaternion targetRot = ConvertSmplRotationToUnity(smplRot, joint, rest);
+
+                        // Blend head rotation from video FaceTrack if available and enabled
+                        if (joint == SmplxJoint.Head && options.ApplyHeadRotationFromFace && videoData != null && videoData.FaceTrack != null && videoData.FaceTrack.HasHeadRotations)
+                        {
+                            Quaternion faceHeadRot = videoData.FaceTrack.GetHeadRotation(t);
+                            Quaternion targetHeadRot = rest * faceHeadRot;
+                            float blendWeight = Mathf.Clamp01(options.HeadRotationBlendWeight > 0f ? options.HeadRotationBlendWeight : 1.0f);
+                            targetRot = Quaternion.Slerp(targetRot, targetHeadRot, blendWeight);
+                        }
 
                         if (prevBoneRotations.TryGetValue(joint, out Quaternion prevRot))
                         {
@@ -388,6 +441,171 @@ namespace TexMotion.Editor.Motion
 #endif
         }
 
+        private static void BuildFaceTrackCurves(
+            AnimationClip clip,
+            VideoMotionData videoData,
+            AnimationBuildOptions options,
+            float dt,
+            int frames)
+        {
+#if UNITY_EDITOR
+            if (videoData == null || videoData.FaceTrack == null) return;
+
+            var faceTrack = videoData.FaceTrack;
+            if (faceTrack.shapes == null || faceTrack.shapes.Length == 0) return;
+
+            // 1. Resolve facial SkinnedMeshRenderer and root-relative path
+            SkinnedMeshRenderer faceRenderer = options.TargetFaceRenderer;
+            GameObject avatarObj = options.TargetAvatar != null ? options.TargetAvatar.gameObject : null;
+
+            if (faceRenderer == null && avatarObj != null)
+            {
+                faceRenderer = FaceEmotionHelper.FindFaceRenderer(avatarObj);
+            }
+
+            string facePath = "";
+            if (faceRenderer != null && avatarObj != null)
+            {
+                facePath = AnimationUtility.CalculateTransformPath(faceRenderer.transform, avatarObj.transform);
+            }
+            else if (options.FaceMapping != null && !string.IsNullOrEmpty(options.FaceMapping.TargetMeshPath))
+            {
+                facePath = options.FaceMapping.TargetMeshPath;
+            }
+            else if (faceRenderer != null)
+            {
+                facePath = faceRenderer.gameObject.name;
+            }
+            else
+            {
+                facePath = "Body"; // Default VRChat mesh path
+            }
+
+            // 2. Resolve mapping profile
+            FaceMappingProfile profile = options.FaceMapping;
+            bool createdTemporaryProfile = false;
+            if (profile == null)
+            {
+                profile = ScriptableObject.CreateInstance<FaceMappingProfile>();
+                createdTemporaryProfile = true;
+                if (faceRenderer != null)
+                {
+                    profile.AutoGenerateMapping(faceRenderer);
+                }
+                else
+                {
+                    profile.ResetToStandard52();
+                }
+            }
+
+            try
+            {
+                float effectiveSpeed = options.Speed > 0f ? options.Speed : 1.0f;
+
+                // 3. Build curve for each mapped shape
+                foreach (var mapping in profile.Mappings)
+                {
+                    if (mapping == null || !mapping.Enabled || string.IsNullOrEmpty(mapping.TargetShapeName))
+                    {
+                        continue;
+                    }
+
+                    string sourceShapeName = profile.GetEffectiveSourceShape(mapping);
+                    var shapeTrack = faceTrack.FindShape(sourceShapeName);
+                    if (shapeTrack == null || shapeTrack.weights == null || shapeTrack.weights.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    var curve = new AnimationCurve();
+                    int weightCount = shapeTrack.weights.Length;
+                    int trackFrames = Math.Min(frames, weightCount);
+
+                    for (int t = 0; t < trackFrames; t++)
+                    {
+                        // Confidence filtering for facial landmarks if available
+                        if (options.MinConfidenceThreshold > 0f && t > 0 && t < trackFrames - 1)
+                        {
+                            if (faceTrack.confidences != null && t < faceTrack.confidences.Length)
+                            {
+                                if (faceTrack.confidences[t] < options.MinConfidenceThreshold)
+                                {
+                                    continue;
+                                }
+                            }
+                        }
+
+                        float time = GetFrameTime(videoData, t, dt, effectiveSpeed);
+                        float rawWeight = shapeTrack.weights[t];
+                        float targetWeight = profile.EvaluateWeight(mapping, rawWeight);
+
+                        curve.AddKey(time, targetWeight);
+                    }
+
+                    if (curve.length > 0)
+                    {
+                        string propertyName = "blendShape." + mapping.TargetShapeName;
+                        clip.SetCurve(facePath, typeof(SkinnedMeshRenderer), propertyName, curve);
+                    }
+                }
+            }
+            finally
+            {
+                if (createdTemporaryProfile && profile != null)
+                {
+                    UnityEngine.Object.DestroyImmediate(profile);
+                }
+            }
+#endif
+        }
+
+        /// <summary>
+        /// Builds an AnimationClip containing only facial blendshape curves suitable for the VRChat FX Layer.
+        /// </summary>
+        public static AnimationClip BuildFaceAnimationClip(VideoMotionData videoData, AnimationBuildOptions options, FaceMappingProfile profile = null)
+        {
+            var faceOptions = options;
+            faceOptions.ExportFaceOnly = true;
+            if (profile != null)
+            {
+                faceOptions.FaceMapping = profile;
+            }
+            if (string.IsNullOrEmpty(faceOptions.ClipName))
+            {
+                faceOptions.ClipName = "TexMotion_FaceFX";
+            }
+            else if (!faceOptions.ClipName.EndsWith("_FX", StringComparison.OrdinalIgnoreCase))
+            {
+                faceOptions.ClipName = faceOptions.ClipName + "_FX";
+            }
+
+            return BuildAnimationClip(videoData, faceOptions);
+        }
+
+        /// <summary>
+        /// Builds a synchronized pair of AnimationClips:
+        /// 1) bodyClip: Humanoid/Muscle body motion for the VRChat Action or Base Layer
+        /// 2) faceClip: BlendShape curves for the VRChat FX Layer
+        /// </summary>
+        public static void BuildSynchronizedClips(
+            VideoMotionData videoData,
+            AnimationBuildOptions bodyOptions,
+            FaceMappingProfile faceProfile,
+            out AnimationClip bodyClip,
+            out AnimationClip faceClip)
+        {
+            if (videoData == null) throw new ArgumentNullException(nameof(videoData));
+
+            // 1. Build body clip (using faceProfile for head rotation if enabled)
+            var bOpt = bodyOptions;
+            bOpt.ExportFaceOnly = false;
+            bOpt.FaceMapping = faceProfile;
+            bodyClip = BuildAnimationClip(videoData, bOpt);
+
+            // 2. Build face clip
+            faceClip = BuildFaceAnimationClip(videoData, bodyOptions, faceProfile);
+        }
+
         private static void BuildGenericCurves(
             AnimationClip clip,
             GeneratedMotionData motionData,
@@ -424,6 +642,13 @@ namespace TexMotion.Editor.Motion
 
                     float time = GetFrameTime(motionData, t, dt, effectiveSpeed);
                     Quaternion q = motionData.LocalRotations[t, j];
+
+                    if (j == (int)SmplxJoint.Head && options.ApplyHeadRotationFromFace && videoData != null && videoData.FaceTrack != null && videoData.FaceTrack.HasHeadRotations)
+                    {
+                        Quaternion faceHeadRot = videoData.FaceTrack.GetHeadRotation(t);
+                        float blendWeight = Mathf.Clamp01(options.HeadRotationBlendWeight > 0f ? options.HeadRotationBlendWeight : 1.0f);
+                        q = Quaternion.Slerp(q, faceHeadRot, blendWeight);
+                    }
 
                     if (hasPrevQ)
                     {

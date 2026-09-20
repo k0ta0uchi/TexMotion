@@ -77,6 +77,13 @@ def test_synthetic_extraction_cli(tmp_path):
     assert len(data["flatLocalRotations"]) == 60 * 22
     assert len(data["timestamps"]) == 60
     assert len(data["confidences"]) == 60
+    assert "contactTrack" in data
+    assert data["contactTrack"]["version"] == 1
+    assert "intervals" in data["contactTrack"]
+    assert "faceTrack" in data
+    assert "repairProvenance" in data
+    assert isinstance(data["repairProvenance"], list)
+
 
 
 def test_synthetic_extraction_stdout_jsonlines_protocol(tmp_path):

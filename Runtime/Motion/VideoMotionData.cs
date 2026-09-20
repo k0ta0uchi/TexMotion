@@ -37,6 +37,16 @@ namespace TexMotion.Runtime.Motion
         public UncertaintyInterval[] UncertaintyIntervals { get; }
 
         /// <summary>
+        /// Foot contact intervals and ground anchors extracted from video or manual keying.
+        /// </summary>
+        public ContactTrackData ContactTrack { get; set; }
+
+        /// <summary>
+        /// Facial BlendShape coefficients and head rotation track extracted from video.
+        /// </summary>
+        public FaceTrackData FaceTrack { get; set; }
+
+        /// <summary>
         /// Path to the preview overlay video (with the active detector's
         /// skeleton drawn) if generated.
         /// </summary>
@@ -443,6 +453,148 @@ namespace TexMotion.Runtime.Motion
         }
 
         /// <summary>
+        /// Inpaints medium-to-long tracking dropouts (0.2s to 2.5s) using Kinematic Hermite Splines
+        /// and SO(3) Squad interpolation with velocity damping and boundary continuity.
+        /// </summary>
+        /// <param name="minConfidenceThreshold">Confidence threshold below which a frame is considered missing.</param>
+        /// <param name="minGapSeconds">Minimum gap duration to inpaint (default 0.2s).</param>
+        /// <param name="maxGapSeconds">Maximum gap duration to inpaint (default 2.5s).</param>
+        /// <param name="damping">Velocity decay factor across long dropouts.</param>
+        /// <returns>Total number of frames inpainted across all joints.</returns>
+        public int InpaintGapsKinematicHermite(
+            float minConfidenceThreshold = 0.35f,
+            float minGapSeconds = 0.2f,
+            float maxGapSeconds = 2.5f,
+            float damping = 0.35f)
+        {
+            if (Frames <= 4 || LocalRotations == null) return 0;
+
+            float fps = FrameRate > 0f ? FrameRate : 30f;
+            float dt = 1f / fps;
+            int minGapFrames = Mathf.Max(1, Mathf.RoundToInt(minGapSeconds * fps));
+            int maxGapFrames = Mathf.Max(minGapFrames, Mathf.RoundToInt(maxGapSeconds * fps));
+
+            int totalInpaintedFrames = 0;
+
+            // Preserve original confidence for independent position and rotation checks
+            float[] origConf = new float[Frames];
+            for (int t = 0; t < Frames; t++)
+            {
+                origConf[t] = Confidences != null && t < Confidences.Length ? Confidences[t] : 1f;
+            }
+
+            // 1. Inpaint Rotations via Squad
+            for (int j = 0; j < JointCount; j++)
+            {
+                int t = 0;
+                while (t < Frames)
+                {
+                    if (origConf[t] < minConfidenceThreshold)
+                    {
+                        int startT = t;
+                        while (t < Frames && origConf[t] < minConfidenceThreshold)
+                        {
+                            t++;
+                        }
+                        int endT = t - 1;
+                        int gapLen = endT - startT + 1;
+
+                        int prevT = startT - 1;
+                        int nextT = endT + 1;
+
+                        if (gapLen >= minGapFrames && gapLen <= maxGapFrames && prevT >= 0 && nextT < Frames)
+                        {
+                            if (origConf[prevT] >= minConfidenceThreshold && origConf[nextT] >= minConfidenceThreshold)
+                            {
+                                Quaternion qPrev = LocalRotations[prevT, j];
+                                Quaternion qNext = LocalRotations[nextT, j];
+
+                                int prevAnchorT = Mathf.Max(0, prevT - 2);
+                                Quaternion qPrevAnchor = LocalRotations[prevAnchorT, j];
+                                Quaternion s0 = ComputeSquadControlPoint(qPrevAnchor, qPrev, qNext);
+
+                                int nextAnchorT = Mathf.Min(Frames - 1, nextT + 2);
+                                Quaternion qNextAnchor = LocalRotations[nextAnchorT, j];
+                                Quaternion s1 = ComputeSquadControlPoint(qPrev, qNext, qNextAnchor);
+
+                                for (int curT = startT; curT <= endT; curT++)
+                                {
+                                    float u = (float)(curT - prevT) / (nextT - prevT);
+                                    LocalRotations[curT, j] = QuaternionSquad(qPrev, qNext, s0, s1, u);
+                                    totalInpaintedFrames++;
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        t++;
+                    }
+                }
+            }
+
+            // 2. Inpaint RootPositions via Cubic Hermite
+            if (RootPositions != null && RootPositions.Length == Frames)
+            {
+                int t = 0;
+                while (t < Frames)
+                {
+                    if (origConf[t] < minConfidenceThreshold)
+                    {
+                        int startT = t;
+                        while (t < Frames && origConf[t] < minConfidenceThreshold)
+                        {
+                            t++;
+                        }
+                        int endT = t - 1;
+                        int gapLen = endT - startT + 1;
+
+                        int prevT = startT - 1;
+                        int nextT = endT + 1;
+
+                        if (gapLen >= minGapFrames && gapLen <= maxGapFrames && prevT >= 0 && nextT < Frames)
+                        {
+                            if (origConf[prevT] >= minConfidenceThreshold && origConf[nextT] >= minConfidenceThreshold)
+                            {
+                                Vector3 p0 = RootPositions[prevT];
+                                Vector3 p1 = RootPositions[nextT];
+
+                                int kBack = Mathf.Max(1, Mathf.Min(3, prevT));
+                                Vector3 v0 = (p0 - RootPositions[prevT - kBack]) / (kBack * dt);
+
+                                int kFwd = Mathf.Max(1, Mathf.Min(3, Frames - 1 - nextT));
+                                Vector3 v1 = (RootPositions[nextT + kFwd] - p1) / (kFwd * dt);
+
+                                float gapDuration = (nextT - prevT) * dt;
+
+                                for (int curT = startT; curT <= endT; curT++)
+                                {
+                                    float u = (float)(curT - prevT) / (nextT - prevT);
+                                    RootPositions[curT] = CubicHermitePosition(p0, p1, v0, v1, gapDuration, u, damping);
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        t++;
+                    }
+                }
+            }
+
+            // Update confidences for repaired frames
+            for (int t = 0; t < Frames; t++)
+            {
+                if (origConf[t] < minConfidenceThreshold)
+                {
+                    Confidences[t] = Mathf.Max(Confidences[t], 0.6f);
+                }
+            }
+
+            return totalInpaintedFrames;
+        }
+
+        /// <summary>
         /// Validates structural integrity of motion data arrays against frame and joint dimensions.
         /// </summary>
         public bool Validate(out string errorMessage)
@@ -614,6 +766,81 @@ namespace TexMotion.Runtime.Motion
                 return new Quaternion(q.x / mag, q.y / mag, q.z / mag, q.w / mag);
             }
             return Quaternion.identity;
+        }
+
+        private static Vector3 QuaternionLog(Quaternion q)
+        {
+            q = NormalizeQuaternion(q);
+            float w = Mathf.Clamp(q.w, -1f, 1f);
+            Vector3 v = new Vector3(q.x, q.y, q.z);
+            float vNorm = v.magnitude;
+            if (vNorm < 1e-6f) return Vector3.zero;
+            float theta = Mathf.Acos(w);
+            return v * (theta / vNorm);
+        }
+
+        private static Quaternion QuaternionExp(Vector3 omega)
+        {
+            float theta = omega.magnitude;
+            if (theta < 1e-6f) return Quaternion.identity;
+            Vector3 axis = omega / theta;
+            float sinHalf = Mathf.Sin(theta);
+            float cosHalf = Mathf.Cos(theta);
+            return new Quaternion(axis.x * sinHalf, axis.y * sinHalf, axis.z * sinHalf, cosHalf);
+        }
+
+        private static Quaternion QuaternionMultiply(Quaternion q1, Quaternion q2)
+        {
+            return new Quaternion(
+                q1.w * q2.x + q1.x * q2.w + q1.y * q2.z - q1.z * q2.y,
+                q1.w * q2.y - q1.x * q2.z + q1.y * q2.w + q1.z * q2.x,
+                q1.w * q2.z + q1.x * q2.y - q1.y * q2.x + q1.z * q2.w,
+                q1.w * q2.w - q1.x * q2.x - q1.y * q2.y - q1.z * q2.z
+            );
+        }
+
+        private static Quaternion QuaternionConjugate(Quaternion q)
+        {
+            return new Quaternion(-q.x, -q.y, -q.z, q.w);
+        }
+
+        private static Quaternion ComputeSquadControlPoint(Quaternion qPrev, Quaternion qCurr, Quaternion qNext)
+        {
+            Quaternion qInv = QuaternionConjugate(qCurr);
+            Quaternion relNext = QuaternionMultiply(qInv, qNext);
+            Quaternion relPrev = QuaternionMultiply(qInv, qPrev);
+            Vector3 log1 = QuaternionLog(relNext);
+            Vector3 log2 = QuaternionLog(relPrev);
+            Vector3 expVec = -0.25f * (log1 + log2);
+            Quaternion deltaQ = QuaternionExp(expVec);
+            return NormalizeQuaternion(QuaternionMultiply(qCurr, deltaQ));
+        }
+
+        private static Quaternion QuaternionSquad(Quaternion q0, Quaternion q1, Quaternion s0, Quaternion s1, float u)
+        {
+            u = Mathf.Clamp01(u);
+            Quaternion qSlerp = SlerpQuaternion(q0, q1, u);
+            Quaternion sSlerp = SlerpQuaternion(s0, s1, u);
+            float h = 2.0f * u * (1.0f - u);
+            return SlerpQuaternion(qSlerp, sSlerp, h);
+        }
+
+        private static Vector3 CubicHermitePosition(Vector3 p0, Vector3 p1, Vector3 v0, Vector3 v1, float duration, float u, float damping)
+        {
+            u = Mathf.Clamp01(u);
+            float u2 = u * u;
+            float u3 = u2 * u;
+
+            float h00 = 2.0f * u3 - 3.0f * u2 + 1.0f;
+            float h10 = u3 - 2.0f * u2 + u;
+            float h01 = -2.0f * u3 + 3.0f * u2;
+            float h11 = u3 - u2;
+
+            float T = Mathf.Max(1e-4f, duration);
+            Vector3 v0Eff = v0 * Mathf.Exp(-damping * u);
+            Vector3 v1Eff = v1 * Mathf.Exp(-damping * (1.0f - u));
+
+            return h00 * p0 + h10 * (v0Eff * T) + h01 * p1 + h11 * (v1Eff * T);
         }
 
         /// <summary>
@@ -878,5 +1105,105 @@ namespace TexMotion.Runtime.Motion
         public string Stage;
         public string Status;
         public string Reason;
+    }
+
+    /// <summary>
+    /// Foot contact interval and anchor data extracted from video or manual keying.
+    /// </summary>
+    [Serializable]
+    public class ContactIntervalData
+    {
+        public string foot; // "left" | "right"
+        public float start;
+        public float end;
+        public string mode = "flat"; // "flat" | "toe" | "heel"
+        public float confidence = 1.0f;
+        public float[] anchor; // [x, y, z] in root-relative or world space
+    }
+
+    /// <summary>
+    /// Timeline of foot contact events for foot locking and grounding IK.
+    /// </summary>
+    [Serializable]
+    public class ContactTrackData
+    {
+        public int version = 1;
+        public ContactIntervalData[] intervals = Array.Empty<ContactIntervalData>();
+    }
+
+    /// <summary>
+    /// Per-shape blendshape animation weights over time.
+    /// </summary>
+    [Serializable]
+    public class FaceShapeTrackData
+    {
+        public string shapeName;
+        public float[] weights = Array.Empty<float>();
+    }
+
+    /// <summary>
+    /// Facial BlendShape coefficients and head rotation track extracted from video.
+    /// </summary>
+    [Serializable]
+    public class FaceTrackData
+    {
+        public int version = 1;
+        public float[] timestamps = Array.Empty<float>();
+        public FaceShapeTrackData[] shapes = Array.Empty<FaceShapeTrackData>();
+        public float[] headRotationsFlat = Array.Empty<float>(); // [frame * 4 + i] -> x, y, z, w
+        public float[] confidences = Array.Empty<float>();
+
+        /// <summary>
+        /// True if head rotations were recorded in this face track.
+        /// </summary>
+        public bool HasHeadRotations => headRotationsFlat != null && headRotationsFlat.Length >= 4;
+
+        /// <summary>
+        /// Gets the head rotation Quaternion for the specified frame index.
+        /// Returns Quaternion.identity if out of range or not available.
+        /// </summary>
+        public Quaternion GetHeadRotation(int frameIndex)
+        {
+            if (headRotationsFlat != null && (frameIndex + 1) * 4 <= headRotationsFlat.Length && frameIndex >= 0)
+            {
+                int baseIdx = frameIndex * 4;
+                return new Quaternion(
+                    headRotationsFlat[baseIdx],
+                    headRotationsFlat[baseIdx + 1],
+                    headRotationsFlat[baseIdx + 2],
+                    headRotationsFlat[baseIdx + 3]
+                );
+            }
+            return Quaternion.identity;
+        }
+
+        /// <summary>
+        /// Finds a specific shape's track data by name (case-insensitive).
+        /// </summary>
+        public FaceShapeTrackData FindShape(string name)
+        {
+            if (shapes == null || string.IsNullOrEmpty(name)) return null;
+            for (int i = 0; i < shapes.Length; i++)
+            {
+                if (shapes[i] != null && string.Equals(shapes[i].shapeName, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    return shapes[i];
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Gets the blendshape weight [0.0, 1.0] for a given shape name and frame index.
+        /// </summary>
+        public float GetWeight(string shapeName, int frameIndex)
+        {
+            var shape = FindShape(shapeName);
+            if (shape != null && shape.weights != null && frameIndex >= 0 && frameIndex < shape.weights.Length)
+            {
+                return shape.weights[frameIndex];
+            }
+            return 0f;
+        }
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using TexMotion.Runtime.Motion;
 
 namespace TexMotion.Runtime.VRChat
 {
@@ -30,5 +31,16 @@ namespace TexMotion.Runtime.VRChat
         public VrcTargetLayer TargetLayer = VrcTargetLayer.ActionLayer;
         public string MenuCategory = "TexMotion";
         public bool InPlace = true;
+
+        /// <summary>
+        /// When true, generates and synchronizes an FX-layer facial expression clip alongside the body action clip.
+        /// </summary>
+        public bool SyncFaceToFxLayer = false;
+
+        /// <summary>
+        /// Optional blendshape mapping profile used for retargeting face blendshapes.
+        /// </summary>
+        public FaceMappingProfile FaceMapping;
     }
 }
+

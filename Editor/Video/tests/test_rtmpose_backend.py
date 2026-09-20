@@ -36,7 +36,7 @@ def test_rtmpose_lifecycle_missing_model(mock_frame_bgr):
     - detect returns None when uninitialized.
     - close properly cleans up and is idempotent.
     """
-    backend = RTMPoseBackend(model_path="non_existent_weights_xyz.onnx")
+    backend = RTMPoseBackend(model_path="non_existent_weights_xyz.onnx", allow_download=False)
     assert backend.is_available() is False
     assert backend.initialize() is False
     assert backend.is_initialized is False
@@ -53,7 +53,7 @@ def test_rtmpose_lifecycle_missing_model(mock_frame_bgr):
 
 def test_rtmpose_context_manager(mock_frame_bgr):
     """Verifies that RTMPoseBackend works as a context manager and safely exits."""
-    with RTMPoseBackend(model_path="non_existent.onnx") as backend:
+    with RTMPoseBackend(model_path="non_existent.onnx", allow_download=False) as backend:
         assert backend.is_initialized is False
         res = backend.detect(mock_frame_bgr, 0.0)
         assert res is None
